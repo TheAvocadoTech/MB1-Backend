@@ -19,11 +19,31 @@ const { connectDB } = require("./config/db"); // Updated import
 const UserRoutes = require("./routes/Users.routes");
 const CompanyRoutes = require("./routes/Company.route");
 const IDManagementRoutes = require("./routes/IDManagment.routes");
+const rfidRoutes = require("./routes/rfid.routes");
+
 /* =======================
    Middleware
 ======================= */
 app.use(helmet());
-app.use(cors());
+
+/* =======================
+   CORS — Allow frontend origins
+======================= */
+app.use(
+  cors({
+    origin: [
+      "http://localhost:3000",
+      "http://localhost:3001",
+      "http://localhost:8000",
+      "http://127.0.0.1:3000",
+      "http://127.0.0.1:3001",
+    ],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
 app.use(cookieParser());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
@@ -55,14 +75,6 @@ app.use((req, res, next) => {
 });
 
 // Enable CORS for all routes
-app.use(
-  cors({
-    origin: "http://localhost:3000", // Your frontend URL
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-  }),
-);
 /* =======================
    Health Check
 ======================= */
@@ -76,6 +88,7 @@ app.get("/api", (req, res) => {
 app.use("/api/auth", UserRoutes);
 app.use("/api/Company", CompanyRoutes);
 app.use("/api/IDManage", IDManagementRoutes);
+app.use("/api/rfid", rfidRoutes);
 /* =======================
    🔥 Route Listing API (DEV ONLY)
 ======================= */
@@ -97,10 +110,52 @@ async function startServer() {
     const pool = await connectDB();
     console.log("✅ Database connection established");
 
-    // Start the server only after DB connection is successful
+    // Start the HTTP server
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);
       console.log(`🌐 Base URL: http://localhost:${PORT}`);
+
+      /* =======================
+         Direct TCP Reader Socket Server (Port 9000)
+      ======================= */
+      const net = require("net");
+      const { parseRRUHFR03Hex } = require("./utils/rfidHexParser");
+      const rfidTrackerService = require("./services/rfidTracker.service");
+
+      const tcpPort = process.env.RFID_TCP_PORT || 9000;
+      const tcpServer = net.createServer((socket) => {
+        console.log(`📡 [TCP RFID] Hardware reader connected from ${socket.remoteAddress}`);
+
+        socket.on("data", (data) => {
+          const rawHex = data.toString("hex").toUpperCase();
+          console.log(`📥 [TCP RFID] Received payload: ${rawHex}`);
+          try {
+            const parsed = parseRRUHFR03Hex(rawHex);
+            rfidTrackerService.updateScan({
+              epc: parsed.epc,
+              readerId: parsed.readerId,
+              received_at: parsed.timestamp,
+              rawHex: parsed.rawHex,
+            });
+          } catch (err) {
+            console.error("❌ [TCP RFID] Packet Parse Error:", err.message);
+          }
+        });
+
+        socket.on("error", (err) => {
+          console.error("⚠️ [TCP RFID] Socket error:", err.message);
+        });
+      });
+
+      tcpServer.listen(tcpPort, () => {
+        console.log(`📡 [TCP RFID SERVER] Reader TCP Socket listening on port ${tcpPort}`);
+      });
+
+      /* =======================
+         TCP Multi-Reader Manager (192.168.30.x)
+      ======================= */
+      const rfidTcpManager = require("./services/rfidTcpManager.service");
+      rfidTcpManager.initAllReaders();
 
       /* =======================
          List All Routes (Console)

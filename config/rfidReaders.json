@@ -1,0 +1,159 @@
+[
+  {
+    "sequence": 1,
+    "id": 32,
+    "ip": "192.168.30.12",
+    "sr": "003",
+    "ser": "20.10",
+    "location": "Reception",
+    "port": 9000,
+    "coords": { "x": 19.9, "y": 40.9 }
+  },
+  {
+    "sequence": 2,
+    "id": 38,
+    "ip": "192.168.30.15",
+    "sr": "006",
+    "ser": "20.10",
+    "location": "Man Trap",
+    "port": 9000,
+    "coords": { "x": 20.9, "y": 35 }
+  },
+  {
+    "sequence": 3,
+    "id": 29,
+    "ip": "192.168.30.11",
+    "sr": "002",
+    "ser": "20.10",
+    "location": "Above Colo-3 Door",
+    "port": 9000,
+    "coords": { "x": 22.3, "y": 30.3 }
+  },
+  {
+    "sequence": 4,
+    "id": 42,
+    "ip": "192.168.30.20",
+    "sr": "0011",
+    "ser": "20.10",
+    "location": "Bom 12 Main Entry Door",
+    "port": 9000,
+    "coords": { "x": 22.7, "y": 39.3 }
+  },
+  {
+    "sequence": 4.5,
+    "id": 9045,
+    "location": "Corridor Turn",
+    "isWaypoint": true,
+    "coords": { "x": 22.7, "y": 44.9 }
+  },
+  {
+    "sequence": 5,
+    "id": 33,
+    "ip": "192.168.30.10",
+    "sr": "001",
+    "ser": "20.10",
+    "location": "NOC ROOM Door",
+    "port": 9000,
+    "coords": { "x": 29.5, "y": 44.9 }
+  },
+  {
+    "sequence": 6,
+    "id": 16,
+    "ip": "192.168.30.22",
+    "sr": "0013",
+    "ser": "20.10",
+    "location": "Front of VSR Door",
+    "port": 9000,
+    "coords": { "x": 34.4, "y": 45 }
+  },
+  {
+    "sequence": 7,
+    "id": 36,
+    "ip": "192.168.30.13",
+    "sr": "004",
+    "ser": "20.10",
+    "location": "Front of Carrier A Door",
+    "port": 9000,
+    "coords": { "x": 38.7, "y": 45.6 }
+  },
+  {
+    "sequence": 8,
+    "id": 31,
+    "ip": "192.168.30.14",
+    "sr": "005",
+    "ser": "20.10",
+    "location": "Loding Gate Door",
+    "port": 9000,
+    "coords": { "x": 47.4, "y": 45.4 }
+  },
+  {
+    "sequence": 9,
+    "id": 45,
+    "ip": "192.168.30.19",
+    "sr": "0010",
+    "ser": "20.10",
+    "location": "Above Colo-2 Door",
+    "port": 9000,
+    "coords": { "x": 46.5, "y": 39.8 }
+  },
+  {
+    "sequence": 10,
+    "id": 39,
+    "ip": "192.168.30.17",
+    "sr": "008",
+    "ser": "20.10",
+    "location": "Colo-1-2 passage 1",
+    "port": 9000,
+    "coords": { "x": 52, "y": 39.8 }
+  },
+  {
+    "sequence": 11,
+    "id": 46,
+    "ip": "192.168.30.23",
+    "sr": "0014",
+    "ser": "20.10",
+    "location": "Colo-1-2 passage 2",
+    "port": 9000,
+    "coords": { "x": 56.8, "y": 39.8 }
+  },
+  {
+    "sequence": 12,
+    "id": 30,
+    "ip": "192.168.30.18",
+    "sr": "009",
+    "ser": "20.10",
+    "location": "Colo-1 Entry",
+    "port": 9000,
+    "coords": { "x": 61.8, "y": 40.3 }
+  },
+  {
+    "sequence": 13,
+    "id": 34,
+    "ip": "192.168.30.16",
+    "sr": "007",
+    "ser": "20.10",
+    "location": "Facing Toward Row 5-6",
+    "port": 9000,
+    "coords": { "x": 61.8, "y": 44.3 }
+  },
+  {
+    "sequence": 14,
+    "id": 41,
+    "ip": "192.168.30.21",
+    "sr": "0012",
+    "ser": "20.10",
+    "location": "First Reader of Row 5,6",
+    "port": 9000,
+    "coords": { "x": 66.6, "y": 44.3 }
+  },
+  {
+    "sequence": 15,
+    "id": 43,
+    "ip": "192.168.30.24",
+    "sr": "0015",
+    "ser": "20.10",
+    "location": "Cabinate End Point",
+    "port": 9000,
+    "coords": { "x": 70.3, "y": 44.4 }
+  }
+]

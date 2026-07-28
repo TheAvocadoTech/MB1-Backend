@@ -1,5 +1,5 @@
 // models/IdManagement.model.js
-const sql = require("mssql");
+const { connectDB, sql } = require("../config/db");
 
 class IdManagement {
   /**
@@ -48,7 +48,10 @@ class IdManagement {
         company,
       });
 
-      const pool = await sql.connect();
+      const crypto = require("crypto");
+      const generatedToken = "VTK_" + crypto.randomBytes(8).toString("hex");
+
+      const pool = await connectDB();
       const result = await pool
         .request()
         .input("visitorName", sql.NVarChar, visitorName)
@@ -61,7 +64,9 @@ class IdManagement {
         .input("validFrom", sql.DateTime, validFrom || new Date())
         .input("validUntil", sql.DateTime, validUntil || null)
         .input("createdBy", sql.Int, createdBy || null)
-        .input("status", sql.NVarChar, status).query(`
+        .input("status", sql.NVarChar, status)
+        .input("qrToken", sql.VarChar(100), generatedToken)
+        .query(`
                     INSERT INTO IdManagement (
                         VisitorName,
                         PhoneNumber,
@@ -73,7 +78,8 @@ class IdManagement {
                         ValidFrom,
                         ValidUntil,
                         CreatedBy,
-                        Status
+                        Status,
+                        QrToken
                     )
                     OUTPUT INSERTED.*
                     VALUES (
@@ -87,12 +93,28 @@ class IdManagement {
                         @validFrom,
                         @validUntil,
                         @createdBy,
-                        @status
+                        @status,
+                        @qrToken
                     )
                 `);
 
-      console.log("✅ ID record created successfully");
-      return result.recordset[0];
+      const createdRecord = result.recordset[0];
+
+      const mapUrl = `http://localhost:3001/?token=${generatedToken}`;
+
+      console.log("\n=========================================================");
+      console.log("🔑 [VISITOR QR TOKEN CREATED & STORED IN DATABASE]");
+      console.log(`📋 IdManagementID:    #${createdRecord.IdManagementID}`);
+      console.log(`📌 Visitor Name:       ${createdRecord.VisitorName}`);
+      console.log(`🎫 Tracking Token:     ${generatedToken}`);
+      console.log(`🌐 Temp Browser URL:   ${mapUrl}`);
+      console.log("=========================================================\n");
+
+      return {
+        ...createdRecord,
+        token: generatedToken,
+        mapUrl,
+      };
     } catch (err) {
       console.error("Error creating ID record:", err);
       throw err;
@@ -165,7 +187,7 @@ class IdManagement {
 
       console.log("📊 Executing ID query with filters:", filters);
 
-      const pool = await sql.connect();
+      const pool = await connectDB();
       const result = await request.query(query);
       return result.recordset;
     } catch (err) {
@@ -181,7 +203,7 @@ class IdManagement {
    */
   static async findById(id) {
     try {
-      const pool = await sql.connect();
+      const pool = await connectDB();
       const result = await pool.request().input("id", sql.Int, id).query(`
                     SELECT 
                         i.*,
@@ -204,7 +226,7 @@ class IdManagement {
    */
   static async findByPhone(phoneNumber) {
     try {
-      const pool = await sql.connect();
+      const pool = await connectDB();
       const result = await pool
         .request()
         .input("phoneNumber", sql.NVarChar, phoneNumber).query(`
@@ -258,7 +280,7 @@ class IdManagement {
       const keys = Object.keys(updates);
       const setClause = keys.map((key) => `${key} = @${key}`).join(", ");
 
-      const pool = await sql.connect();
+      const pool = await connectDB();
       const request = pool.request().input("id", sql.Int, id);
 
       keys.forEach((key) => {
@@ -300,7 +322,7 @@ class IdManagement {
    */
   static async delete(id) {
     try {
-      const pool = await sql.connect();
+      const pool = await connectDB();
       const result = await pool.request().input("id", sql.Int, id).query(`
                     UPDATE IdManagement 
                     SET IsActive = 0, DeletedAt = GETDATE()
@@ -324,7 +346,7 @@ class IdManagement {
    */
   static async findActive() {
     try {
-      const pool = await sql.connect();
+      const pool = await connectDB();
       const result = await pool.request().query(`
                     SELECT * FROM IdManagement 
                     WHERE Status = 'Active' AND IsActive = 1
@@ -343,7 +365,7 @@ class IdManagement {
    */
   static async findExpired() {
     try {
-      const pool = await sql.connect();
+      const pool = await connectDB();
       const result = await pool.request().query(`
                     SELECT * FROM IdManagement 
                     WHERE Status = 'Expired' AND IsActive = 1
@@ -371,7 +393,7 @@ class IdManagement {
         request.input("status", sql.NVarChar, status);
       }
 
-      const pool = await sql.connect();
+      const pool = await connectDB();
       const result = await request.query(query);
       return result.recordset[0].total;
     } catch (err) {
@@ -386,7 +408,7 @@ class IdManagement {
    */
   static async getStats() {
     try {
-      const pool = await sql.connect();
+      const pool = await connectDB();
       const result = await pool.request().query(`
                     SELECT 
                         COUNT(*) as total,
@@ -402,6 +424,142 @@ class IdManagement {
       return result.recordset[0];
     } catch (err) {
       console.error("Error getting ID stats:", err);
+      throw err;
+    }
+  }
+
+  /**
+   * Ensure RfidCode and QrToken columns exist on IdManagement table (safe migration)
+   * Called once at startup — adds columns only if they don't already exist
+   */
+  static async ensureRfidCodeColumn() {
+    try {
+      const pool = await connectDB();
+      await pool.request().query(`
+        IF NOT EXISTS (
+          SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_NAME = 'IdManagement' AND COLUMN_NAME = 'RfidCode'
+        )
+        BEGIN
+          ALTER TABLE IdManagement ADD RfidCode VARCHAR(100) NULL;
+        END
+
+        IF NOT EXISTS (
+          SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_NAME = 'IdManagement' AND COLUMN_NAME = 'QrToken'
+        )
+        BEGIN
+          ALTER TABLE IdManagement ADD QrToken VARCHAR(100) NULL;
+        END
+      `);
+      console.log("✅ [SQL MODEL] IdManagement (RfidCode & QrToken) columns verified/ready");
+    } catch (err) {
+      console.error("❌ [SQL MODEL] Error ensuring columns on IdManagement:", err);
+    }
+  }
+
+  /**
+   * Find IdManagement record by QrToken string
+   * @param {string} token - QrToken
+   * @returns {Promise<Object|null>} Record or null
+   */
+  static async findByToken(token) {
+    try {
+      const pool = await connectDB();
+      const result = await pool
+        .request()
+        .input("token", sql.VarChar(100), (token || "").trim())
+        .query(`
+          SELECT TOP 1 i.*
+          FROM IdManagement i
+          WHERE (i.QrToken = @token OR i.RfidCode = @token) AND i.IsActive = 1
+        `);
+      return result.recordset[0] || null;
+    } catch (err) {
+      console.error("❌ [SQL MODEL] Error finding record by token:", err);
+      throw err;
+    }
+  }
+
+  /**
+   * Assign an RFID badge code to an existing IdManagement record
+   * @param {number} idManagementId - IdManagementID primary key
+   * @param {string} rfidCode - RFID EPC/badge code to assign
+   * @returns {Promise<Object|null>} Updated record or null
+   */
+  static async assignRfidCode(idManagementId, rfidCode) {
+    try {
+      const pool = await connectDB();
+      const result = await pool
+        .request()
+        .input("id", sql.Int, idManagementId)
+        .input("rfidCode", sql.VarChar(100), rfidCode.trim().toUpperCase())
+        .query(`
+          UPDATE IdManagement
+          SET RfidCode = @rfidCode
+          WHERE IdManagementID = @id AND IsActive = 1;
+
+          SELECT i.*, u.FullName as CreatedByName
+          FROM IdManagement i
+          LEFT JOIN Users u ON i.CreatedBy = u.UserID
+          WHERE i.IdManagementID = @id AND i.IsActive = 1;
+        `);
+      const updated = result.recordset[0] || null;
+      if (updated) {
+        console.log(`✅ [SQL MODEL] RfidCode '${rfidCode}' assigned to IdManagementID #${idManagementId} (${updated.VisitorName})`);
+      }
+      return updated;
+    } catch (err) {
+      console.error("❌ [SQL MODEL] Error assigning RfidCode:", err);
+      throw err;
+    }
+  }
+
+  /**
+   * Find an IdManagement record by RFID badge code
+   * @param {string} rfidCode - RFID EPC/badge code
+   * @returns {Promise<Object|null>} ID record or null
+   */
+  static async findByRfidCode(rfidCode) {
+    try {
+      const pool = await connectDB();
+      const result = await pool
+        .request()
+        .input("rfidCode", sql.VarChar(100), rfidCode.trim().toUpperCase())
+        .query(`
+          SELECT i.*, u.FullName as CreatedByName
+          FROM IdManagement i
+          LEFT JOIN Users u ON i.CreatedBy = u.UserID
+          WHERE i.RfidCode = @rfidCode AND i.IsActive = 1
+          ORDER BY i.CreatedAt DESC
+        `);
+      return result.recordset[0] || null;
+    } catch (err) {
+      console.error("❌ [SQL MODEL] Error finding record by RfidCode:", err);
+      throw err;
+    }
+  }
+
+  /**
+   * Get visitor info + assigned RfidCode for a given IdManagement record ID
+   * @param {number} idManagementId - Primary key
+   * @returns {Promise<Object|null>} Record with RfidCode or null
+   */
+  static async getVisitorWithRfid(idManagementId) {
+    try {
+      const pool = await connectDB();
+      const result = await pool
+        .request()
+        .input("id", sql.Int, idManagementId)
+        .query(`
+          SELECT i.IdManagementID, i.VisitorName, i.PhoneNumber, i.Company,
+                 i.Purpose, i.IdType, i.Status, i.RfidCode, i.ValidFrom, i.ValidUntil
+          FROM IdManagement i
+          WHERE i.IdManagementID = @id AND i.IsActive = 1
+        `);
+      return result.recordset[0] || null;
+    } catch (err) {
+      console.error("❌ [SQL MODEL] Error getting visitor with RFID:", err);
       throw err;
     }
   }

@@ -2,10 +2,10 @@
 const sql = require("mssql");
 
 const config = {
-  server: process.env.DB_SERVER || "localhost\\SQLEXPRESS",
-  database: process.env.DB_NAME || "LLD",
-  user: process.env.DB_USER || "node_user",
-  password: process.env.DB_PASSWORD || "YourStrongPassword123!",
+  server: process.env.DB_SERVER,
+  database: process.env.DB_NAME,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
   // port: 1433, // Explicitly specify port
   options: {
     trustServerCertificate: true,
