@@ -28,6 +28,19 @@ app.use(cookieParser());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 
+// Global Request Logger
+app.use((req, res, next) => {
+  console.log(`\n🌐 [BACKEND REQ] ${new Date().toISOString()} | ${req.method} ${req.originalUrl}`);
+  if (Object.keys(req.body).length > 0) {
+    const sanitizedBody = { ...req.body };
+    if (sanitizedBody.password) sanitizedBody.password = "***HIDDEN***";
+    if (sanitizedBody.Password) sanitizedBody.Password = "***HIDDEN***";
+    console.log("   📦 Body:", sanitizedBody);
+  }
+  if (Object.keys(req.query).length > 0) console.log("   🔍 Query:", req.query);
+  next();
+});
+
 /* =======================
    CORS Headers
 ======================= */

@@ -2,11 +2,11 @@
 const sql = require("mssql");
 
 const config = {
-  server: process.env.DB_SERVER || "localhost\\TEST",
+  server: process.env.DB_SERVER || "localhost\\SQLEXPRESS",
   database: process.env.DB_NAME || "LLD",
   user: process.env.DB_USER || "node_user",
   password: process.env.DB_PASSWORD || "YourStrongPassword123!",
-  port: 1433, // Explicitly specify port
+  // port: 1433, // Explicitly specify port
   options: {
     trustServerCertificate: true,
     encrypt: false,
@@ -14,7 +14,7 @@ const config = {
     connectionTimeout: 30000,
     requestTimeout: 30000,
     // Add these options
-    instanceName: "TEST", // Specify instance name explicitly
+    instanceName: "SQLEXPRESS", // Specify instance name explicitly
     connectTimeout: 30000,
     cancelTimeout: 30000,
   },

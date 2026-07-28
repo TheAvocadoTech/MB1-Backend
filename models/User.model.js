@@ -9,14 +9,21 @@ class User {
    */
   static async findByEmail(email) {
     try {
+      console.log(`🗄️ [DB User] Searching Users table for Email: "${email}"`);
       const pool = await sql.connect();
       const result = await pool
         .request()
         .input("email", sql.NVarChar, email)
         .query("SELECT * FROM Users WHERE Email = @email");
-      return result.recordset[0] || null;
+      const foundUser = result.recordset[0] || null;
+      if (foundUser) {
+        console.log(`   ✅ User found: ID=${foundUser.UserID}, Email=${foundUser.Email}, Role=${foundUser.Role}`);
+      } else {
+        console.log(`   ⚠️ No user found with Email: "${email}"`);
+      }
+      return foundUser;
     } catch (err) {
-      console.error("Error finding user by email:", err);
+      console.error("❌ Error finding user by email:", err);
       throw err;
     }
   }

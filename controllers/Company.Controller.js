@@ -67,6 +67,7 @@ const createCompany = async (req, res) => {
 const getAllCompanies = async (req, res) => {
   try {
     const { search, industry, page = 1, limit = 10 } = req.query;
+    console.log(`🏢 [COMPANY CTRL] getAllCompanies requested with params:`, { search, industry, page, limit });
 
     const filters = {
       search: search || null,
@@ -77,6 +78,8 @@ const getAllCompanies = async (req, res) => {
 
     const companies = await Company.findAll(filters);
     const total = await Company.count(search);
+
+    console.log(`   ✅ Returning ${companies.length} companies out of ${total} total.`);
 
     res.json({
       success: true,

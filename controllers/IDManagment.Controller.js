@@ -80,6 +80,8 @@ const getAllIdRecords = async (req, res) => {
       sortOrder = "DESC",
     } = req.query;
 
+    console.log(`📇 [ID MANAGE CTRL] getAllIdRecords with params:`, { search, status, idType, sortBy, sortOrder });
+
     const filters = {
       search: search || null,
       status: status || null,
@@ -90,6 +92,8 @@ const getAllIdRecords = async (req, res) => {
 
     const records = await IdManagement.findAll(filters);
     const total = await IdManagement.count(status);
+
+    console.log(`   ✅ Returning ${records.length} ID pass records out of ${total} total.`);
 
     res.json({
       success: true,

@@ -104,6 +104,7 @@ const login = async (req, res) => {
     const user = await User.findByEmail(email);
 
     if (!user) {
+      console.log(`❌ [AUTH CTRL] Login failed: User "${email}" not found in DB.`);
       return res.status(401).json({
         success: false,
         message: "Invalid email or password.",
@@ -117,6 +118,7 @@ const login = async (req, res) => {
     );
 
     if (!isMatch) {
+      console.log(`❌ [AUTH CTRL] Login failed: Password mismatch for user "${email}".`);
       return res.status(401).json({
         success: false,
         message: "Invalid email or password.",
@@ -135,6 +137,8 @@ const login = async (req, res) => {
         expiresIn: "7d",
       },
     );
+
+    console.log(`🎉 [AUTH CTRL] Login SUCCESS for "${email}" (Role: ${user.Role}). Token issued.`);
 
     // Remove password from response
     delete user.Password;
