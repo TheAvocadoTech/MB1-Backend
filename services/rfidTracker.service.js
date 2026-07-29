@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const rfidConfig = require("../config/rfidConfig");
 const jsonPath = path.join(__dirname, "../config/rfidReaders.json");
 
 /**
@@ -32,7 +33,7 @@ const tokenMap = new Map();
  * @param {string} [opts.visitorName]    - Display name override
  */
 async function generateQrToken({ idManagementId, rfidCode, tagCode, visitorName }) {
-  let resolvedRfidCode = (rfidCode || tagCode || "").trim().toUpperCase();
+  let resolvedRfidCode = (rfidCode || tagCode || rfidConfig.DEFAULT_TRACKING_TAG).trim().toUpperCase();
   let resolvedName = visitorName || "Guest Visitor";
   let resolvedIdManagementId = idManagementId || null;
 
@@ -44,8 +45,8 @@ async function generateQrToken({ idManagementId, rfidCode, tagCode, visitorName 
       if (visitor) {
         resolvedName = visitor.VisitorName || resolvedName;
         // Use DB-assigned RfidCode (authoritative source)
-        if (visitor.RfidCode) {
-          resolvedRfidCode = visitor.RfidCode.trim().toUpperCase();
+        if (visitor.RfidCode || visitor.IdNumber) {
+          resolvedRfidCode = (visitor.RfidCode || visitor.IdNumber).trim().toUpperCase();
         }
         console.log(
           `🔎 [QR TOKEN] DB cross-check for IdManagementID #${idManagementId}: ` +
@@ -57,10 +58,6 @@ async function generateQrToken({ idManagementId, rfidCode, tagCode, visitorName 
     } catch (dbErr) {
       console.error("⚠️ [QR TOKEN] DB lookup failed, using provided rfidCode:", dbErr.message);
     }
-  }
-
-  if (!resolvedRfidCode) {
-    throw new Error("Cannot generate token: No RFID Code resolved. Assign an RFID badge to the visitor first.");
   }
 
   const token = "VTK_" + crypto.randomBytes(8).toString("hex");
@@ -92,12 +89,6 @@ async function generateQrToken({ idManagementId, rfidCode, tagCode, visitorName 
 
 /**
  * Resolve a QR Token to live path data.
- * Cross-checks the DB to ensure the visitor's RfidCode hasn't changed since token was issued.
- *
- * @param {string} tokenInput - The VTK_... token string
- */
-/**
- * Resolve a QR Token to live path data.
  * Cross-checks the DB to ensure the visitor's assigned RfidCode in SQL Server is used.
  *
  * @param {string} tokenInput - The VTK_... token string or tag code
@@ -115,7 +106,7 @@ async function getLivePathByToken(tokenInput) {
         tokenData = {
           token,
           idManagementId: dbRecord.IdManagementID,
-          tagCode: dbRecord.RfidCode || dbRecord.RfidCodeHex || token,
+          tagCode: dbRecord.RfidCode || dbRecord.IdNumber || dbRecord.RfidCodeHex || token,
           visitorName: dbRecord.VisitorName || "Visitor",
         };
         tokenMap.set(token, tokenData);
@@ -127,7 +118,7 @@ async function getLivePathByToken(tokenInput) {
 
   if (!tokenData) {
     // If unknown token, fall back to checking if it's a direct RFID tag registered in DB
-    return await getLivePathForTag(token);
+    return await getLivePathForTag(token || rfidConfig.DEFAULT_TRACKING_TAG);
   }
 
   let tagCodeToUse = tokenData.tagCode;
@@ -138,7 +129,7 @@ async function getLivePathByToken(tokenInput) {
       const IdManagement = require("../models/IDManagement.model");
       const visitor = await IdManagement.getVisitorWithRfid(tokenData.idManagementId);
       if (visitor) {
-        const freshCode = (visitor.RfidCode || visitor.RfidCodeHex || tagCodeToUse).trim().toUpperCase();
+        const freshCode = (visitor.RfidCode || visitor.IdNumber || visitor.RfidCodeHex || tagCodeToUse).trim().toUpperCase();
         if (freshCode !== tagCodeToUse) {
           console.log(
             `🔄 [TOKEN REFRESH] RfidCode updated for IdManagementID #${tokenData.idManagementId}: ` +
@@ -150,7 +141,7 @@ async function getLivePathByToken(tokenInput) {
         tokenData.visitorName = visitor.VisitorName || tokenData.visitorName;
       }
     } catch (dbErr) {
-      console.error("⚠️ [TOKEN REFRESH] DB re-check failed, using cached tagCode:", dbErr.message);
+      console.error("⚠️ [TOKEN REFRESH] DB re-check failed:", dbErr.message);
     }
   }
 
@@ -183,13 +174,8 @@ function findReader(readerIdInput) {
 
 /**
  * Process and update an RFID scan for a tag
- * Cross-checks database to verify if tag belongs to a registered visitor.
- * ONLY updates live position if timestamp is newer than existing stored timestamp.
- */
-/**
- * Process and update an RFID scan for a tag
- * Matches incoming stream tags (e.g. 56303032E5B68E68BB0DE045) by 8-character hex prefix (56303032 = V002, 56303031 = V001).
- * Cross-checks SQL Server DB first, with hardcoded fallback support for V001 and V002 tags.
+ * Matches incoming stream tags by 8-character hex prefix (e.g. 56303031 = V001).
+ * Uses SQL Server DB matching first, falling back to rfidConfig single centralized fallback.
  */
 async function updateScan({ rfid_code, epc, machine_number, readerId, received_at, rawHex }) {
   const tagCode = (epc || rfid_code || "").trim().toUpperCase();
@@ -212,13 +198,9 @@ async function updateScan({ rfid_code, epc, machine_number, readerId, received_a
     // Non-blocking DB lookup error
   }
 
-  // Fallback visitor assignment for V001 and V002 if DB returns null
+  // Single centralized fallback assignment using rfidConfig if DB returns null
   if (!visitorMatch) {
-    if (asciiTag === "V001" || prefixHex === "56303031") {
-      visitorMatch = { VisitorName: "Visitor V001", IdManagementID: 9001, IdNumber: "V001", Company: "Main Entrance Tag" };
-    } else if (asciiTag === "V002" || prefixHex === "56303032") {
-      visitorMatch = { VisitorName: "Visitor V002", IdManagementID: 9002, IdNumber: "V002", Company: "Main Entrance Tag" };
-    }
+    visitorMatch = rfidConfig.getDefaultVisitorFallback(asciiTag || raw || tagCode);
   }
 
   // 2. Lookup existing state by any known key format (full hex, 8-digit prefix, ASCII tag)
@@ -265,11 +247,11 @@ async function updateScan({ rfid_code, epc, machine_number, readerId, received_a
 
 /**
  * Get current live position & shortened path for an RFID tag
- * Cross-checks SQL Server DB or uses prefix/hardcoded fallback (V001 / V002).
+ * Defaults to rfidConfig.DEFAULT_TRACKING_TAG if no tag code passed.
  */
 async function getLivePathForTag(tagCodeInput) {
   const readersList = getReadersList();
-  const rawTag = (tagCodeInput || "").trim().toUpperCase();
+  const rawTag = (tagCodeInput || rfidConfig.DEFAULT_TRACKING_TAG).trim().toUpperCase();
   const IdManagement = require("../models/IDManagement.model");
   const { raw, hex, prefixHex, asciiTag } = IdManagement.normalizeRfidFormats(rawTag);
 
@@ -281,13 +263,9 @@ async function getLivePathForTag(tagCodeInput) {
     console.error("⚠️ [LIVE PATH] DB lookup error:", err.message);
   }
 
-  // Fallback visitor details for V001 / V002 if DB record not found
+  // Single centralized fallback visitor details using rfidConfig if DB record not found
   if (!dbVisitor) {
-    if (asciiTag === "V001" || prefixHex === "56303031") {
-      dbVisitor = { VisitorName: "Visitor V001", IdManagementID: 9001, IdNumber: "V001", Company: "Tag V001" };
-    } else if (asciiTag === "V002" || prefixHex === "56303032") {
-      dbVisitor = { VisitorName: "Visitor V002", IdManagementID: 9002, IdNumber: "V002", Company: "Tag V002" };
-    }
+    dbVisitor = rfidConfig.getDefaultVisitorFallback(asciiTag || rawTag);
   }
 
   // 2. Multi-tier state lookup: direct match, prefix match, or ASCII tag match

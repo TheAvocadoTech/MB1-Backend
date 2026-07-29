@@ -73,16 +73,15 @@ exports.ingestScan = async (req, res) => {
   }
 };
 
+const rfidConfig = require("../config/rfidConfig");
+
 /**
  * Get Live Path and Remaining Route for a Tag
- * GET /api/rfid/live/:tagCode
+ * GET /api/rfid/live/:tagCode?
  */
 exports.getLivePath = async (req, res) => {
   try {
-    const { tagCode } = req.params;
-    if (!tagCode) {
-      return res.status(400).json({ success: false, message: "Tag code parameter is required" });
-    }
+    const tagCode = req.params.tagCode || rfidConfig.DEFAULT_TRACKING_TAG;
 
     res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.setHeader("Pragma", "no-cache");

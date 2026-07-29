@@ -21,8 +21,8 @@ router.post("/assign-rfid", rfidController.assignRfid);
 // Get live position & shortened path by QR Token
 router.get("/live-token/:token", rfidController.getLivePathByToken);
 
-// Get live position & shortened path for a tag
-router.get("/live/:tagCode", rfidController.getLivePath);
+// Get live position & shortened path for a tag (defaults to single centralized fallback tag if omitted)
+router.get("/live/:tagCode?", rfidController.getLivePath);
 
 // Get 15 RFID readers route map configuration
 router.get("/readers", rfidController.getReaders);

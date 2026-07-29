@@ -1,8 +1,9 @@
 const http = require("http");
 const rfidTrackerService = require("./rfidTracker.service");
+const rfidConfig = require("../config/rfidConfig");
 
-const DATA_URL = process.env.RFID_STREAM_URL || "http://16.170.141.146:5000/data";
-const POLL_INTERVAL_MS = parseInt(process.env.RFID_POLL_INTERVAL_MS || "1000", 10); // Poll every 1 second
+const DATA_URL = rfidConfig.RFID_STREAM_URL;
+const POLL_INTERVAL_MS = rfidConfig.POLL_INTERVAL_MS;
 
 let pollerTimer = null;
 
