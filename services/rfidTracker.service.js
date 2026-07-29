@@ -98,6 +98,12 @@ async function generateQrToken({ idManagementId, rfidCode, tagCode, visitorName 
  *
  * @param {string} tokenInput - The VTK_... token string
  */
+/**
+ * Resolve a QR Token to live path data.
+ * Cross-checks the DB to ensure the visitor's assigned RfidCode in SQL Server is used.
+ *
+ * @param {string} tokenInput - The VTK_... token string or tag code
+ */
 async function getLivePathByToken(tokenInput) {
   const token = (tokenInput || "").trim();
   let tokenData = tokenMap.get(token);
@@ -111,7 +117,7 @@ async function getLivePathByToken(tokenInput) {
         tokenData = {
           token,
           idManagementId: dbRecord.IdManagementID,
-          tagCode: dbRecord.RfidCode || "E28011B0A502006E81D29C8",
+          tagCode: dbRecord.RfidCode || dbRecord.RfidCodeHex || token,
           visitorName: dbRecord.VisitorName || "Visitor",
         };
         tokenMap.set(token, tokenData);
@@ -122,19 +128,19 @@ async function getLivePathByToken(tokenInput) {
   }
 
   if (!tokenData) {
-    // Unknown token — fall back to using it as a direct RFID tag code
-    return getLivePathForTag(token);
+    // If unknown token, fall back to checking if it's a direct RFID tag registered in DB
+    return await getLivePathForTag(token);
   }
 
   let tagCodeToUse = tokenData.tagCode;
 
-  // --- DB Cross-check: Re-verify the visitor's current assigned RfidCode ---
+  // --- DB Cross-check: Re-verify the visitor's current assigned RfidCode from DB ---
   if (tokenData.idManagementId) {
     try {
       const IdManagement = require("../models/IDManagement.model");
       const visitor = await IdManagement.getVisitorWithRfid(tokenData.idManagementId);
-      if (visitor && visitor.RfidCode) {
-        const freshCode = visitor.RfidCode.trim().toUpperCase();
+      if (visitor) {
+        const freshCode = (visitor.RfidCode || visitor.RfidCodeHex || tagCodeToUse).trim().toUpperCase();
         if (freshCode !== tagCodeToUse) {
           console.log(
             `🔄 [TOKEN REFRESH] RfidCode updated for IdManagementID #${tokenData.idManagementId}: ` +
@@ -143,16 +149,17 @@ async function getLivePathByToken(tokenInput) {
           tokenData.tagCode = freshCode;
           tagCodeToUse = freshCode;
         }
+        tokenData.visitorName = visitor.VisitorName || tokenData.visitorName;
       }
     } catch (dbErr) {
       console.error("⚠️ [TOKEN REFRESH] DB re-check failed, using cached tagCode:", dbErr.message);
     }
   }
 
-  const livePath = getLivePathForTag(tagCodeToUse);
+  const livePath = await getLivePathForTag(tagCodeToUse);
   return {
     ...livePath,
-    visitorName: tokenData.visitorName,
+    visitorName: tokenData.visitorName || livePath.visitorName,
     token: tokenData.token,
     idManagementId: tokenData.idManagementId,
   };
@@ -178,9 +185,10 @@ function findReader(readerIdInput) {
 
 /**
  * Process and update an RFID scan for a tag
- * ONLY updates if timestamp is newer than existing stored timestamp
+ * Cross-checks database to verify if tag belongs to a registered visitor.
+ * ONLY updates live position if timestamp is newer than existing stored timestamp.
  */
-function updateScan({ rfid_code, epc, machine_number, readerId, received_at, rawHex }) {
+async function updateScan({ rfid_code, epc, machine_number, readerId, received_at, rawHex }) {
   const tagCode = (epc || rfid_code || "").trim().toUpperCase();
   const targetReaderId = readerId || machine_number;
 
@@ -200,7 +208,16 @@ function updateScan({ rfid_code, epc, machine_number, readerId, received_at, raw
     rawHex: rawHex || null,
   }).catch((err) => console.error("❌ SQL Log Error:", err));
 
-  // 2. Compare timestamps in-memory: update ONLY if newer or no existing state
+  // 2. Cross-check SQL Server DB to find registered visitor matching this RFID tag
+  let visitorMatch = null;
+  try {
+    const IdManagement = require("../models/IDManagement.model");
+    visitorMatch = await IdManagement.findByRfidCode(tagCode);
+  } catch (err) {
+    // Non-blocking DB lookup error
+  }
+
+  // 3. Compare timestamps in-memory: update ONLY if newer or no existing state
   const IdManagement = require("../models/IDManagement.model");
   const { raw, hex } = IdManagement.normalizeRfidFormats(tagCode);
   const existingState = latestTagState.get(tagCode) || latestTagState.get(raw) || latestTagState.get(hex);
@@ -209,6 +226,9 @@ function updateScan({ rfid_code, epc, machine_number, readerId, received_at, raw
     const updatedState = {
       tagCode: raw || tagCode,
       tagCodeHex: hex || tagCode,
+      visitorName: visitorMatch ? visitorMatch.VisitorName : null,
+      idManagementId: visitorMatch ? visitorMatch.IdManagementID : null,
+      company: visitorMatch ? visitorMatch.Company : null,
       readerId: reader ? reader.id : targetReaderId,
       sequence: reader ? reader.sequence : 1,
       location: reader ? reader.location : "Unknown Location",
@@ -222,25 +242,32 @@ function updateScan({ rfid_code, epc, machine_number, readerId, received_at, raw
     if (hex) latestTagState.set(hex, updatedState);
 
     console.log(
-      `📡 [RFID TRACKER] Tag '${raw}' (Hex: '${hex}') updated -> Reader #${updatedState.readerId} (${updatedState.location}) [Seq ${updatedState.sequence}/15]`
+      `📡 [RFID TRACKER] Tag '${raw}' (Hex: '${hex}') scanned at Reader #${updatedState.readerId} (${updatedState.location}) [Seq ${updatedState.sequence}/15]` +
+      (visitorMatch ? ` -> Visitor: ${visitorMatch.VisitorName}` : " [Unassigned Tag]")
     );
     return updatedState;
   }
 
-  console.log(
-    `⏳ [RFID TRACKER] Tag ${tagCode} scan ignored (older timestamp ${scanTime.toISOString()})`
-  );
   return existingState;
 }
 
 /**
  * Get current live position & shortened path for an RFID tag
+ * Cross-checks SQL Server DB to verify visitor record and assigned RFID code.
  */
-function getLivePathForTag(tagCodeInput) {
+async function getLivePathForTag(tagCodeInput) {
   const readersList = getReadersList();
   const rawTag = (tagCodeInput || "").trim().toUpperCase();
   const IdManagement = require("../models/IDManagement.model");
   const { raw, hex } = IdManagement.normalizeRfidFormats(rawTag);
+
+  // Cross-check database for registered visitor record matching this tag or token
+  let dbVisitor = null;
+  try {
+    dbVisitor = await IdManagement.findByRfidCode(rawTag) || await IdManagement.findByToken(rawTag);
+  } catch (err) {
+    console.error("⚠️ [LIVE PATH] DB lookup error:", err.message);
+  }
 
   const currentState =
     latestTagState.get(rawTag) ||
@@ -257,6 +284,12 @@ function getLivePathForTag(tagCodeInput) {
 
   return {
     tagCode: rawTag,
+    tagCodeHex: hex,
+    isRegisteredVisitor: !!dbVisitor,
+    visitorName: dbVisitor ? dbVisitor.VisitorName : (currentState?.visitorName || "Visitor"),
+    company: dbVisitor ? dbVisitor.Company : (currentState?.company || null),
+    purpose: dbVisitor ? dbVisitor.Purpose : null,
+    idManagementId: dbVisitor ? dbVisitor.IdManagementID : null,
     hasScanned: !!currentState,
     currentReader: {
       id: currentReader.id,
