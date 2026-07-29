@@ -1,8 +1,6 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
-const RfidLogModel = require("../models/RfidLog.model");
-
 const jsonPath = path.join(__dirname, "../config/rfidReaders.json");
 
 /**
@@ -199,16 +197,7 @@ async function updateScan({ rfid_code, epc, machine_number, readerId, received_a
   const reader = findReader(targetReaderId);
   const scanTime = received_at ? new Date(received_at) : new Date();
 
-  // 1. Asynchronously log EVERY scan event to SQL Server Database
-  RfidLogModel.createLog({
-    rfid_code: tagCode,
-    machine_number: reader ? reader.id : targetReaderId,
-    location: reader ? reader.location : "Unknown Location",
-    received_at: scanTime.toISOString(),
-    rawHex: rawHex || null,
-  }).catch((err) => console.error("❌ SQL Log Error:", err));
-
-  // 2. Cross-check SQL Server DB to find registered visitor matching this RFID tag
+  // 1. Cross-check SQL Server DB to find registered visitor matching this RFID tag
   let visitorMatch = null;
   try {
     const IdManagement = require("../models/IDManagement.model");
