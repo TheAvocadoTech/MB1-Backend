@@ -155,9 +155,11 @@ async function startServer() {
         console.log(`📡 [TCP RFID SERVER] Reader TCP Socket listening on port ${tcpPort}`);
       });
 
-      // Disabled outgoing socket connector (using HTTP REST API / TCP Server mode instead)
-      // const rfidTcpManager = require("./services/rfidTcpManager.service");
-      // rfidTcpManager.initAllReaders();
+      /* =======================
+         Live RFID External Data Stream Poller (http://16.170.141.146:5000/data)
+      ======================= */
+      const rfidPoller = require("./services/rfidPoller.service");
+      rfidPoller.startPoller();
 
       /* =======================
          List All Routes (Console)
