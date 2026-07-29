@@ -154,11 +154,9 @@ async function startServer() {
         console.log(`📡 [TCP RFID SERVER] Reader TCP Socket listening on port ${tcpPort}`);
       });
 
-      /* =======================
-         TCP Multi-Reader Manager (192.168.30.x)
-      ======================= */
-      const rfidTcpManager = require("./services/rfidTcpManager.service");
-      rfidTcpManager.initAllReaders();
+      // Disabled outgoing socket connector (using HTTP REST API / TCP Server mode instead)
+      // const rfidTcpManager = require("./services/rfidTcpManager.service");
+      // rfidTcpManager.initAllReaders();
 
       /* =======================
          List All Routes (Console)
