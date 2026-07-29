@@ -429,7 +429,37 @@ class IdManagement {
   }
 
   /**
-   * Ensure RfidCode and QrToken columns exist on IdManagement table (safe migration)
+   * Helper utility: Normalize RFID code into both raw string and Hex representation
+   * @param {string} code - Badge code input (can be text like 'v001', decimal number, or raw hex)
+   * @returns {{ raw: string, hex: string }} Both normal text and hex values
+   */
+  static normalizeRfidFormats(code) {
+    if (!code) return { raw: "", hex: "" };
+    const str = String(code).trim().toUpperCase();
+    const isHex = /^[0-9A-FA-F]+$/.test(str);
+
+    let raw = str;
+    let hex = str;
+
+    if (isHex && str.length % 2 === 0) {
+      hex = str;
+      // Check if it can be decoded to clean ASCII text (e.g. '56303031' -> 'V001')
+      try {
+        const ascii = Buffer.from(str, "hex").toString("utf8").trim();
+        if (/^[a-zA-Z0-9_\-]+$/.test(ascii) && ascii.length >= 2) {
+          raw = ascii;
+        }
+      } catch (e) {}
+    } else {
+      // Plain text or decimal input -> convert to Hex
+      hex = Buffer.from(str, "utf8").toString("hex").toUpperCase();
+    }
+
+    return { raw, hex };
+  }
+
+  /**
+   * Ensure RfidCode, RfidCodeHex, and QrToken columns exist on IdManagement table (safe migration)
    * Called once at startup — adds columns only if they don't already exist
    */
   static async ensureRfidCodeColumn() {
@@ -446,13 +476,21 @@ class IdManagement {
 
         IF NOT EXISTS (
           SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+          WHERE TABLE_NAME = 'IdManagement' AND COLUMN_NAME = 'RfidCodeHex'
+        )
+        BEGIN
+          ALTER TABLE IdManagement ADD RfidCodeHex VARCHAR(100) NULL;
+        END
+
+        IF NOT EXISTS (
+          SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
           WHERE TABLE_NAME = 'IdManagement' AND COLUMN_NAME = 'QrToken'
         )
         BEGIN
           ALTER TABLE IdManagement ADD QrToken VARCHAR(100) NULL;
         END
       `);
-      console.log("✅ [SQL MODEL] IdManagement (RfidCode & QrToken) columns verified/ready");
+      console.log("✅ [SQL MODEL] IdManagement (RfidCode, RfidCodeHex & QrToken) columns verified/ready");
     } catch (err) {
       console.error("❌ [SQL MODEL] Error ensuring columns on IdManagement:", err);
     }
@@ -466,13 +504,18 @@ class IdManagement {
   static async findByToken(token) {
     try {
       const pool = await connectDB();
+      const cleanToken = (token || "").trim();
+      const { raw, hex } = this.normalizeRfidFormats(cleanToken);
+
       const result = await pool
         .request()
-        .input("token", sql.VarChar(100), (token || "").trim())
+        .input("token", sql.VarChar(100), cleanToken)
+        .input("raw", sql.VarChar(100), raw)
+        .input("hex", sql.VarChar(100), hex)
         .query(`
           SELECT TOP 1 i.*
           FROM IdManagement i
-          WHERE (i.QrToken = @token OR i.RfidCode = @token) AND i.IsActive = 1
+          WHERE (i.QrToken = @token OR i.RfidCode = @raw OR i.RfidCodeHex = @hex OR i.RfidCode = @hex OR i.RfidCodeHex = @raw) AND i.IsActive = 1
         `);
       return result.recordset[0] || null;
     } catch (err) {
@@ -483,20 +526,23 @@ class IdManagement {
 
   /**
    * Assign an RFID badge code to an existing IdManagement record
+   * Stores both the normal text representation and the Hex-converted value.
    * @param {number} idManagementId - IdManagementID primary key
    * @param {string} rfidCode - RFID EPC/badge code to assign
    * @returns {Promise<Object|null>} Updated record or null
    */
   static async assignRfidCode(idManagementId, rfidCode) {
     try {
+      const { raw, hex } = this.normalizeRfidFormats(rfidCode);
       const pool = await connectDB();
       const result = await pool
         .request()
         .input("id", sql.Int, idManagementId)
-        .input("rfidCode", sql.VarChar(100), rfidCode.trim().toUpperCase())
+        .input("rfidCode", sql.VarChar(100), raw)
+        .input("rfidCodeHex", sql.VarChar(100), hex)
         .query(`
           UPDATE IdManagement
-          SET RfidCode = @rfidCode
+          SET RfidCode = @rfidCode, RfidCodeHex = @rfidCodeHex
           WHERE IdManagementID = @id AND IsActive = 1;
 
           SELECT i.*, u.FullName as CreatedByName
@@ -506,7 +552,7 @@ class IdManagement {
         `);
       const updated = result.recordset[0] || null;
       if (updated) {
-        console.log(`✅ [SQL MODEL] RfidCode '${rfidCode}' assigned to IdManagementID #${idManagementId} (${updated.VisitorName})`);
+        console.log(`✅ [SQL MODEL] RfidCode '${raw}' (Hex: '${hex}') assigned to IdManagementID #${idManagementId} (${updated.VisitorName})`);
       }
       return updated;
     } catch (err) {
@@ -516,21 +562,23 @@ class IdManagement {
   }
 
   /**
-   * Find an IdManagement record by RFID badge code
+   * Find an IdManagement record by RFID badge code (checks both normal value and hex conversion)
    * @param {string} rfidCode - RFID EPC/badge code
    * @returns {Promise<Object|null>} ID record or null
    */
   static async findByRfidCode(rfidCode) {
     try {
+      const { raw, hex } = this.normalizeRfidFormats(rfidCode);
       const pool = await connectDB();
       const result = await pool
         .request()
-        .input("rfidCode", sql.VarChar(100), rfidCode.trim().toUpperCase())
+        .input("raw", sql.VarChar(100), raw)
+        .input("hex", sql.VarChar(100), hex)
         .query(`
           SELECT i.*, u.FullName as CreatedByName
           FROM IdManagement i
           LEFT JOIN Users u ON i.CreatedBy = u.UserID
-          WHERE i.RfidCode = @rfidCode AND i.IsActive = 1
+          WHERE (i.RfidCode = @raw OR i.RfidCodeHex = @hex OR i.RfidCode = @hex OR i.RfidCodeHex = @raw) AND i.IsActive = 1
           ORDER BY i.CreatedAt DESC
         `);
       return result.recordset[0] || null;
@@ -553,7 +601,7 @@ class IdManagement {
         .input("id", sql.Int, idManagementId)
         .query(`
           SELECT i.IdManagementID, i.VisitorName, i.PhoneNumber, i.Company,
-                 i.Purpose, i.IdType, i.Status, i.RfidCode, i.ValidFrom, i.ValidUntil
+                 i.Purpose, i.IdType, i.Status, i.RfidCode, i.RfidCodeHex, i.ValidFrom, i.ValidUntil
           FROM IdManagement i
           WHERE i.IdManagementID = @id AND i.IsActive = 1
         `);
