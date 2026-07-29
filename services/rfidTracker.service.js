@@ -256,7 +256,7 @@ function getLivePathForTag(tagCodeInput) {
   const progressPercent = Math.round((currentSequence / readersList.length) * 100);
 
   return {
-    tagCode,
+    tagCode: rawTag,
     hasScanned: !!currentState,
     currentReader: {
       id: currentReader.id,
