@@ -30,11 +30,12 @@ function fetchRfidStream() {
         const latestPerTag = new Map();
         for (const scan of parsed.data) {
           if (!scan.rfid_code || !scan.machine_number) continue;
-          const tag = scan.rfid_code.toUpperCase();
+          // Group by 8-character hex prefix (e.g. 56303032 for V002) so we get newest scan across all variants
+          const tagKey = scan.rfid_code.length >= 8 ? scan.rfid_code.substring(0, 8).toUpperCase() : scan.rfid_code.toUpperCase();
           const scanTime = new Date(scan.received_at);
-          const existing = latestPerTag.get(tag);
+          const existing = latestPerTag.get(tagKey);
           if (!existing || scanTime > new Date(existing.received_at)) {
-            latestPerTag.set(tag, scan);
+            latestPerTag.set(tagKey, scan);
           }
         }
 
