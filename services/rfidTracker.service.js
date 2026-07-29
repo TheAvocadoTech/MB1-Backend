@@ -201,11 +201,14 @@ function updateScan({ rfid_code, epc, machine_number, readerId, received_at, raw
   }).catch((err) => console.error("❌ SQL Log Error:", err));
 
   // 2. Compare timestamps in-memory: update ONLY if newer or no existing state
-  const existingState = latestTagState.get(tagCode);
+  const IdManagement = require("../models/IDManagement.model");
+  const { raw, hex } = IdManagement.normalizeRfidFormats(tagCode);
+  const existingState = latestTagState.get(tagCode) || latestTagState.get(raw) || latestTagState.get(hex);
 
   if (!existingState || scanTime >= new Date(existingState.received_at)) {
     const updatedState = {
-      tagCode,
+      tagCode: raw || tagCode,
+      tagCodeHex: hex || tagCode,
       readerId: reader ? reader.id : targetReaderId,
       sequence: reader ? reader.sequence : 1,
       location: reader ? reader.location : "Unknown Location",
@@ -215,8 +218,11 @@ function updateScan({ rfid_code, epc, machine_number, readerId, received_at, raw
     };
 
     latestTagState.set(tagCode, updatedState);
+    if (raw) latestTagState.set(raw, updatedState);
+    if (hex) latestTagState.set(hex, updatedState);
+
     console.log(
-      `📡 [RFID TRACKER] Tag ${tagCode} updated -> Reader #${updatedState.readerId} (${updatedState.location}) [Seq ${updatedState.sequence}/15]`
+      `📡 [RFID TRACKER] Tag '${raw}' (Hex: '${hex}') updated -> Reader #${updatedState.readerId} (${updatedState.location}) [Seq ${updatedState.sequence}/15]`
     );
     return updatedState;
   }
@@ -232,8 +238,14 @@ function updateScan({ rfid_code, epc, machine_number, readerId, received_at, raw
  */
 function getLivePathForTag(tagCodeInput) {
   const readersList = getReadersList();
-  const tagCode = (tagCodeInput || "").trim().toUpperCase();
-  const currentState = latestTagState.get(tagCode);
+  const rawTag = (tagCodeInput || "").trim().toUpperCase();
+  const IdManagement = require("../models/IDManagement.model");
+  const { raw, hex } = IdManagement.normalizeRfidFormats(rawTag);
+
+  const currentState =
+    latestTagState.get(rawTag) ||
+    (raw ? latestTagState.get(raw) : null) ||
+    (hex ? latestTagState.get(hex) : null);
 
   const currentSequence = currentState ? currentState.sequence : 1;
   const currentReader = readersList.find((r) => r.sequence === currentSequence) || readersList[0];
