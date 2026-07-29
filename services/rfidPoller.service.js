@@ -26,8 +26,9 @@ function fetchRfidStream() {
           const parsed = JSON.parse(rawData);
           if (parsed.success && Array.isArray(parsed.data)) {
             let updateCount = 0;
-            // Process incoming scans (newest to oldest or vice versa)
-            parsed.data.forEach((scan) => {
+            // Process incoming scans from oldest to newest so latest scan sets final position
+            const sortedScans = [...parsed.data].reverse();
+            sortedScans.forEach((scan) => {
               if (scan.rfid_code && scan.machine_number) {
                 try {
                   rfidTrackerService.updateScan({
