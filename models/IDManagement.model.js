@@ -452,6 +452,7 @@ class IdManagement {
         if (/^[a-zA-Z0-9_\-]+$/.test(decodedPrefix) && decodedPrefix.length >= 2) {
           asciiTag = decodedPrefix;
           raw = decodedPrefix;
+          hex = prefixHex;
         }
       } catch (e) {}
 
@@ -460,6 +461,7 @@ class IdManagement {
         const fullDecoded = Buffer.from(str, "hex").toString("utf8").trim();
         if (/^[a-zA-Z0-9_\-]+$/.test(fullDecoded) && fullDecoded.length >= 2) {
           raw = fullDecoded;
+          hex = Buffer.from(fullDecoded, "utf8").toString("hex").toUpperCase();
         }
       } catch (e) {}
     } else {
