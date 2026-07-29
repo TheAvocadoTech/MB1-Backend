@@ -76,7 +76,7 @@ async function generateQrToken({ idManagementId, rfidCode, tagCode, visitorName 
 
   tokenMap.set(token, tokenData);
 
-  const mapUrl = `http://localhost:3001/?token=${token}`;
+  const mapUrl = `http://192.168.20.10:8000/temp/?token=${token}`;
 
   console.log("\n=========================================================");
   console.log("🔑 [VISITOR QR TOKEN GENERATED]");
