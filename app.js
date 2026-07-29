@@ -34,12 +34,13 @@ app.use(
     origin: [
       "http://localhost:3000",
       "http://localhost:3001",
-      "http://localhost:8000",
+      "http://localhost:7000",
       "http://127.0.0.1:3000",
       "http://127.0.0.1:3001",
+      "http://127.0.0.1:7000",
       "http://192.168.20.10:3000",
       "http://192.168.20.10:3001",
-      "http://192.168.20.10:8000",
+      "http://192.168.20.10:7000",
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
@@ -104,7 +105,7 @@ if (process.env.NODE_ENV !== "production") {
 /* =======================
    Database Connection & Server Start
 ======================= */
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 7000;
 
 async function startServer() {
   try {
