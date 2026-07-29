@@ -37,6 +37,9 @@ app.use(
       "http://localhost:8000",
       "http://127.0.0.1:3000",
       "http://127.0.0.1:3001",
+      "http://192.168.20.10:3000",
+      "http://192.168.20.10:3001",
+      "http://192.168.20.10:8000",
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
@@ -111,9 +114,9 @@ async function startServer() {
     console.log("✅ Database connection established");
 
     // Start the HTTP server
-    app.listen(PORT, () => {
+    app.listen(PORT, "0.0.0.0", () => {
       console.log(`🚀 Server running on port ${PORT}`);
-      console.log(`🌐 Base URL: http://localhost:${PORT}`);
+      console.log(`🌐 Base URL: http://192.168.20.10:${PORT}`);
 
       /* =======================
          Direct TCP Reader Socket Server (Port 9000)
