@@ -211,7 +211,7 @@ async function updateScan({ rfid_code, epc, machine_number, readerId, received_a
   const { raw, hex } = IdManagement.normalizeRfidFormats(tagCode);
   const existingState = latestTagState.get(tagCode) || latestTagState.get(raw) || latestTagState.get(hex);
 
-  if (!existingState || scanTime >= new Date(existingState.received_at)) {
+  if (!existingState || scanTime > new Date(existingState.received_at)) {
     const updatedState = {
       tagCode: raw || tagCode,
       tagCodeHex: hex || tagCode,
