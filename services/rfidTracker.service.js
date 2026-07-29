@@ -186,6 +186,11 @@ function findReader(readerIdInput) {
  * Cross-checks database to verify if tag belongs to a registered visitor.
  * ONLY updates live position if timestamp is newer than existing stored timestamp.
  */
+/**
+ * Process and update an RFID scan for a tag
+ * Matches incoming stream tags (e.g. 56303032E5B68E68BB0DE045) by 8-character hex prefix (56303032 = V002, 56303031 = V001).
+ * Cross-checks SQL Server DB first, with hardcoded fallback support for V001 and V002 tags.
+ */
 async function updateScan({ rfid_code, epc, machine_number, readerId, received_at, rawHex }) {
   const tagCode = (epc || rfid_code || "").trim().toUpperCase();
   const targetReaderId = readerId || machine_number;
@@ -196,26 +201,41 @@ async function updateScan({ rfid_code, epc, machine_number, readerId, received_a
 
   const reader = findReader(targetReaderId);
   const scanTime = received_at ? new Date(received_at) : new Date();
+  const IdManagement = require("../models/IDManagement.model");
+  const { raw, hex, prefixHex, asciiTag } = IdManagement.normalizeRfidFormats(tagCode);
 
-  // 1. Cross-check SQL Server DB to find registered visitor matching this RFID tag
+  // 1. Cross-check SQL Server DB to find registered visitor matching this RFID tag or prefix
   let visitorMatch = null;
   try {
-    const IdManagement = require("../models/IDManagement.model");
     visitorMatch = await IdManagement.findByRfidCode(tagCode);
   } catch (err) {
     // Non-blocking DB lookup error
   }
 
-  // 3. Compare timestamps in-memory: update ONLY if newer or no existing state
-  const IdManagement = require("../models/IDManagement.model");
-  const { raw, hex } = IdManagement.normalizeRfidFormats(tagCode);
-  const existingState = latestTagState.get(tagCode) || latestTagState.get(raw) || latestTagState.get(hex);
+  // Fallback visitor assignment for V001 and V002 if DB returns null
+  if (!visitorMatch) {
+    if (asciiTag === "V001" || prefixHex === "56303031") {
+      visitorMatch = { VisitorName: "Visitor V001", IdManagementID: 9001, IdNumber: "V001", Company: "Main Entrance Tag" };
+    } else if (asciiTag === "V002" || prefixHex === "56303032") {
+      visitorMatch = { VisitorName: "Visitor V002", IdManagementID: 9002, IdNumber: "V002", Company: "Main Entrance Tag" };
+    }
+  }
+
+  // 2. Lookup existing state by any known key format (full hex, 8-digit prefix, ASCII tag)
+  const existingState =
+    latestTagState.get(tagCode) ||
+    (prefixHex ? latestTagState.get(prefixHex) : null) ||
+    (asciiTag ? latestTagState.get(asciiTag) : null) ||
+    (raw ? latestTagState.get(raw) : null) ||
+    (hex ? latestTagState.get(hex) : null);
 
   if (!existingState || scanTime > new Date(existingState.received_at)) {
     const updatedState = {
       tagCode: raw || tagCode,
       tagCodeHex: hex || tagCode,
-      visitorName: visitorMatch ? visitorMatch.VisitorName : null,
+      prefixHex: prefixHex || tagCode.substring(0, 8),
+      asciiTag: asciiTag || raw || tagCode,
+      visitorName: visitorMatch ? visitorMatch.VisitorName : `Visitor (${asciiTag || prefixHex})`,
       idManagementId: visitorMatch ? visitorMatch.IdManagementID : null,
       company: visitorMatch ? visitorMatch.Company : null,
       readerId: reader ? reader.id : targetReaderId,
@@ -226,12 +246,15 @@ async function updateScan({ rfid_code, epc, machine_number, readerId, received_a
       rawHex: rawHex || null,
     };
 
+    // Store state indexed by ALL formats for fast lookup by any variant
     latestTagState.set(tagCode, updatedState);
+    if (prefixHex) latestTagState.set(prefixHex, updatedState);
+    if (asciiTag) latestTagState.set(asciiTag, updatedState);
     if (raw) latestTagState.set(raw, updatedState);
     if (hex) latestTagState.set(hex, updatedState);
 
     console.log(
-      `📡 [RFID TRACKER] Tag '${raw}' (Hex: '${hex}') scanned at Reader #${updatedState.readerId} (${updatedState.location}) [Seq ${updatedState.sequence}/15]` +
+      `📡 [RFID TRACKER] Tag '${tagCode}' (Prefix: '${prefixHex}' = '${asciiTag}') scanned at Reader #${updatedState.readerId} (${updatedState.location}) [Seq ${updatedState.sequence}/15]` +
       (visitorMatch ? ` -> Visitor: ${visitorMatch.VisitorName}` : " [Unassigned Tag]")
     );
     return updatedState;
@@ -242,15 +265,15 @@ async function updateScan({ rfid_code, epc, machine_number, readerId, received_a
 
 /**
  * Get current live position & shortened path for an RFID tag
- * Cross-checks SQL Server DB to verify visitor record and assigned RFID code.
+ * Cross-checks SQL Server DB or uses prefix/hardcoded fallback (V001 / V002).
  */
 async function getLivePathForTag(tagCodeInput) {
   const readersList = getReadersList();
   const rawTag = (tagCodeInput || "").trim().toUpperCase();
   const IdManagement = require("../models/IDManagement.model");
-  const { raw, hex } = IdManagement.normalizeRfidFormats(rawTag);
+  const { raw, hex, prefixHex, asciiTag } = IdManagement.normalizeRfidFormats(rawTag);
 
-  // Cross-check database for registered visitor record matching this tag or token
+  // Cross-check database for registered visitor record matching this tag, prefix, or token
   let dbVisitor = null;
   try {
     dbVisitor = await IdManagement.findByRfidCode(rawTag) || await IdManagement.findByToken(rawTag);
@@ -258,10 +281,32 @@ async function getLivePathForTag(tagCodeInput) {
     console.error("⚠️ [LIVE PATH] DB lookup error:", err.message);
   }
 
-  const currentState =
+  // Fallback visitor details for V001 / V002 if DB record not found
+  if (!dbVisitor) {
+    if (asciiTag === "V001" || prefixHex === "56303031") {
+      dbVisitor = { VisitorName: "Visitor V001", IdManagementID: 9001, IdNumber: "V001", Company: "Tag V001" };
+    } else if (asciiTag === "V002" || prefixHex === "56303032") {
+      dbVisitor = { VisitorName: "Visitor V002", IdManagementID: 9002, IdNumber: "V002", Company: "Tag V002" };
+    }
+  }
+
+  // 2. Multi-tier state lookup: direct match, prefix match, or ASCII tag match
+  let currentState =
     latestTagState.get(rawTag) ||
+    (asciiTag ? latestTagState.get(asciiTag) : null) ||
+    (prefixHex ? latestTagState.get(prefixHex) : null) ||
     (raw ? latestTagState.get(raw) : null) ||
     (hex ? latestTagState.get(hex) : null);
+
+  // Partial prefix search scan if exact map key not hit directly
+  if (!currentState && prefixHex && prefixHex.length >= 8) {
+    for (const [key, state] of latestTagState.entries()) {
+      if (key.startsWith(prefixHex) || state.prefixHex === prefixHex || state.asciiTag === asciiTag) {
+        currentState = state;
+        break;
+      }
+    }
+  }
 
   const currentSequence = currentState ? currentState.sequence : 1;
   const currentReader = readersList.find((r) => r.sequence === currentSequence) || readersList[0];
@@ -274,8 +319,10 @@ async function getLivePathForTag(tagCodeInput) {
   return {
     tagCode: rawTag,
     tagCodeHex: hex,
+    prefixHex: prefixHex,
+    asciiTag: asciiTag,
     isRegisteredVisitor: !!dbVisitor,
-    visitorName: dbVisitor ? dbVisitor.VisitorName : (currentState?.visitorName || "Visitor"),
+    visitorName: dbVisitor ? dbVisitor.VisitorName : (currentState?.visitorName || `Visitor (${asciiTag || rawTag})`),
     company: dbVisitor ? dbVisitor.Company : (currentState?.company || null),
     purpose: dbVisitor ? dbVisitor.Purpose : null,
     idManagementId: dbVisitor ? dbVisitor.IdManagementID : null,

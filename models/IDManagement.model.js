@@ -434,28 +434,43 @@ class IdManagement {
    * @returns {{ raw: string, hex: string }} Both normal text and hex values
    */
   static normalizeRfidFormats(code) {
-    if (!code) return { raw: "", hex: "" };
+    if (!code) return { raw: "", hex: "", prefixHex: "", asciiTag: "" };
     const str = String(code).trim().toUpperCase();
     const isHex = /^[0-9A-FA-F]+$/.test(str);
 
     let raw = str;
     let hex = str;
+    let prefixHex = isHex ? str.substring(0, 8) : "";
+    let asciiTag = str;
 
-    if (isHex && str.length % 2 === 0) {
+    if (isHex && str.length >= 8) {
       hex = str;
-      // Check if it can be decoded to clean ASCII text (e.g. '56303031' -> 'V001')
+      prefixHex = str.substring(0, 8);
+      // Try decoding the first 8 hex characters (e.g. '56303031' -> 'V001', '56303032' -> 'V002')
       try {
-        const ascii = Buffer.from(str, "hex").toString("utf8").trim();
-        if (/^[a-zA-Z0-9_\-]+$/.test(ascii) && ascii.length >= 2) {
-          raw = ascii;
+        const decodedPrefix = Buffer.from(prefixHex, "hex").toString("utf8").trim();
+        if (/^[a-zA-Z0-9_\-]+$/.test(decodedPrefix) && decodedPrefix.length >= 2) {
+          asciiTag = decodedPrefix;
+          raw = decodedPrefix;
+        }
+      } catch (e) {}
+
+      // Also try decoding full string if whole string is short valid hex text
+      try {
+        const fullDecoded = Buffer.from(str, "hex").toString("utf8").trim();
+        if (/^[a-zA-Z0-9_\-]+$/.test(fullDecoded) && fullDecoded.length >= 2) {
+          raw = fullDecoded;
         }
       } catch (e) {}
     } else {
-      // Plain text or decimal input -> convert to Hex
+      // Plain text or decimal input (e.g. 'V001' or 'V002') -> convert to Hex
+      asciiTag = str;
+      raw = str;
       hex = Buffer.from(str, "utf8").toString("hex").toUpperCase();
+      prefixHex = hex.substring(0, 8);
     }
 
-    return { raw, hex };
+    return { raw, hex, prefixHex, asciiTag };
   }
 
   /**
@@ -568,17 +583,26 @@ class IdManagement {
    */
   static async findByRfidCode(rfidCode) {
     try {
-      const { raw, hex } = this.normalizeRfidFormats(rfidCode);
+      const { raw, hex, prefixHex, asciiTag } = this.normalizeRfidFormats(rfidCode);
       const pool = await connectDB();
       const result = await pool
         .request()
         .input("raw", sql.VarChar(100), raw)
         .input("hex", sql.VarChar(100), hex)
+        .input("prefixHex", sql.VarChar(100), prefixHex || "")
+        .input("asciiTag", sql.VarChar(100), asciiTag || "")
         .query(`
           SELECT i.*, u.FullName as CreatedByName
           FROM IdManagement i
           LEFT JOIN Users u ON i.CreatedBy = u.UserID
-          WHERE (i.RfidCode = @raw OR i.RfidCodeHex = @hex OR i.RfidCode = @hex OR i.RfidCodeHex = @raw) AND i.IsActive = 1
+          WHERE (
+            i.IdNumber = @asciiTag OR i.IdNumber = @raw
+            OR i.RfidCode = @raw OR i.RfidCodeHex = @hex
+            OR i.RfidCode = @hex OR i.RfidCodeHex = @raw
+            OR i.RfidCode = @asciiTag OR i.RfidCodeHex = @prefixHex
+            OR (LEN(@prefixHex) >= 8 AND (i.RfidCode LIKE @prefixHex + '%' OR i.RfidCodeHex LIKE @prefixHex + '%'))
+            OR (LEN(@prefixHex) >= 8 AND (i.IdNumber LIKE @asciiTag + '%'))
+          ) AND i.IsActive = 1
           ORDER BY i.CreatedAt DESC
         `);
       return result.recordset[0] || null;
