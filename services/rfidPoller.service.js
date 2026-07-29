@@ -16,7 +16,7 @@ function fetchRfidStream() {
         rawData += chunk;
       });
 
-      res.on("end", () => {
+      res.on("end", async () => {
         try {
           if (res.statusCode !== 200) {
             console.warn(`⚠️ [RFID POLLER] HTTP ${res.statusCode} from stream URL`);
@@ -28,10 +28,10 @@ function fetchRfidStream() {
             let updateCount = 0;
             // Process incoming scans from oldest to newest so latest scan sets final position
             const sortedScans = [...parsed.data].reverse();
-            sortedScans.forEach((scan) => {
+            for (const scan of sortedScans) {
               if (scan.rfid_code && scan.machine_number) {
                 try {
-                  rfidTrackerService.updateScan({
+                  await rfidTrackerService.updateScan({
                     rfid_code: scan.rfid_code,
                     machine_number: scan.machine_number,
                     received_at: scan.received_at,
@@ -41,7 +41,7 @@ function fetchRfidStream() {
                   // Silently ignore individual scan formatting errors
                 }
               }
-            });
+            }
             if (updateCount > 0 && process.env.NODE_ENV !== "production") {
               console.log(`📡 [RFID POLLER] Synchronized ${updateCount} scans from external stream (${DATA_URL})`);
             }

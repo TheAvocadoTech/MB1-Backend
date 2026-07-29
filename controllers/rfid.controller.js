@@ -88,7 +88,7 @@ exports.getLivePath = async (req, res) => {
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
 
-    const liveData = rfidTrackerService.getLivePathForTag(tagCode);
+    const liveData = await rfidTrackerService.getLivePathForTag(tagCode);
     return res.status(200).json({
       success: true,
       data: liveData,
