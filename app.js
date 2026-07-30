@@ -119,41 +119,6 @@ async function startServer() {
       console.log(`🚀 Server running on port ${PORT}`);
       console.log(`🌐 Base URL: http://192.168.20.10:${PORT}`);
 
-      /* =======================
-         Direct TCP Reader Socket Server (Port 9000)
-      ======================= */
-      const net = require("net");
-      const { parseRRUHFR03Hex } = require("./utils/rfidHexParser");
-      const rfidTrackerService = require("./services/rfidTracker.service");
-
-      const tcpPort = process.env.RFID_TCP_PORT || 9000;
-      const tcpServer = net.createServer((socket) => {
-        console.log(`📡 [TCP RFID] Hardware reader connected from ${socket.remoteAddress}`);
-
-        socket.on("data", (data) => {
-          const rawHex = data.toString("hex").toUpperCase();
-          console.log(`📥 [TCP RFID] Received payload: ${rawHex}`);
-          try {
-            const parsed = parseRRUHFR03Hex(rawHex);
-            rfidTrackerService.updateScan({
-              epc: parsed.epc,
-              readerId: parsed.readerId,
-              received_at: parsed.timestamp,
-              rawHex: parsed.rawHex,
-            });
-          } catch (err) {
-            console.error("❌ [TCP RFID] Packet Parse Error:", err.message);
-          }
-        });
-
-        socket.on("error", (err) => {
-          console.error("⚠️ [TCP RFID] Socket error:", err.message);
-        });
-      });
-
-      tcpServer.listen(tcpPort, () => {
-        console.log(`📡 [TCP RFID SERVER] Reader TCP Socket listening on port ${tcpPort}`);
-      });
 
       /* =======================
          Live RFID External Data Stream Poller (http://16.170.141.146:5000/data)

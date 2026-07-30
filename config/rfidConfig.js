@@ -8,7 +8,7 @@ const DEFAULT_TRACKING_TAG = process.env.DEFAULT_TRACKING_TAG || "V002";
 const RFID_STREAM_URL =
   process.env.RFID_STREAM_URL || "http://16.170.141.146:5000/data";
 const POLL_INTERVAL_MS = parseInt(
-  process.env.RFID_POLL_INTERVAL_MS || "1000",
+  process.env.RFID_POLL_INTERVAL_MS || "300",
   10,
 );
 
