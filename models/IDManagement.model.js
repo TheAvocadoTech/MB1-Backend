@@ -100,7 +100,7 @@ class IdManagement {
 
       const createdRecord = result.recordset[0];
 
-      const mapUrl = `http://localhost:3001/?token=${generatedToken}`;
+      const mapUrl = `http://localhost:3000/temp/?token=${generatedToken}`;
 
       console.log("\n=========================================================");
       console.log("🔑 [VISITOR QR TOKEN CREATED & STORED IN DATABASE]");
@@ -435,41 +435,48 @@ class IdManagement {
    */
   static normalizeRfidFormats(code) {
     if (!code) return { raw: "", hex: "", prefixHex: "", asciiTag: "" };
-    const str = String(code).trim().toUpperCase();
+    const rawCode = String(code).trim();
+    const str = rawCode.toUpperCase();
     const isHex = /^[0-9A-FA-F]+$/.test(str);
 
-    let raw = str;
+    let raw = rawCode;
     let hex = str;
-    let prefixHex = isHex ? str.substring(0, 8) : "";
-    let asciiTag = str;
+    let prefixHex = isHex && str.length >= 8 ? str.substring(0, 8) : "";
+    let asciiTag = rawCode;
 
     if (isHex && str.length >= 8) {
       hex = str;
       prefixHex = str.substring(0, 8);
-      // Try decoding the first 8 hex characters (e.g. '56303031' -> 'V001', '56303032' -> 'V002')
+      // Try latin1 decoding for single-byte tag labels (e.g. '30395DFA' -> '09]ú')
       try {
-        const decodedPrefix = Buffer.from(prefixHex, "hex").toString("utf8").trim();
-        if (/^[a-zA-Z0-9_\-]+$/.test(decodedPrefix) && decodedPrefix.length >= 2) {
-          asciiTag = decodedPrefix;
-          raw = decodedPrefix;
-          hex = prefixHex;
+        const decodedLatin1 = Buffer.from(prefixHex, "hex").toString("latin1").trim();
+        if (decodedLatin1.length >= 2 && !/[\x00-\x1F\x7F]/.test(decodedLatin1)) {
+          asciiTag = decodedLatin1;
+          raw = decodedLatin1;
         }
       } catch (e) {}
 
-      // Also try decoding full string if whole string is short valid hex text
+      // Try utf8 decoding as fallback
       try {
-        const fullDecoded = Buffer.from(str, "hex").toString("utf8").trim();
-        if (/^[a-zA-Z0-9_\-]+$/.test(fullDecoded) && fullDecoded.length >= 2) {
-          raw = fullDecoded;
-          hex = Buffer.from(fullDecoded, "utf8").toString("hex").toUpperCase();
+        const decodedUtf8 = Buffer.from(prefixHex, "hex").toString("utf8").trim();
+        if (decodedUtf8.length >= 2 && !/[\x00-\x1F\x7F\uFFFD]/.test(decodedUtf8)) {
+          asciiTag = decodedUtf8;
+          raw = decodedUtf8;
         }
       } catch (e) {}
     } else {
-      // Plain text or decimal input (e.g. 'V001' or 'V002') -> convert to Hex
-      asciiTag = str;
-      raw = str;
-      hex = Buffer.from(str, "utf8").toString("hex").toUpperCase();
-      prefixHex = hex.substring(0, 8);
+      // Plain text or tag string (e.g. '09]ú' or 'V002') -> convert to Hex via latin1
+      asciiTag = rawCode;
+      raw = rawCode;
+      const sub = rawCode.substring(0, 4);
+      const latin1Hex = Buffer.from(sub, "latin1").toString("hex").toUpperCase();
+      if (latin1Hex.length === 8) {
+        prefixHex = latin1Hex;
+        hex = Buffer.from(rawCode, "latin1").toString("hex").toUpperCase();
+      } else {
+        hex = Buffer.from(rawCode, "utf8").toString("hex").toUpperCase();
+        prefixHex = hex.substring(0, 8);
+      }
     }
 
     return { raw, hex, prefixHex, asciiTag };
@@ -516,13 +523,13 @@ class IdManagement {
   /**
    * Find IdManagement record by QrToken string
    * @param {string} token - QrToken
-   * @returns {Promise<Object|null>} Record or null
+   * @returns {Promise<Object|null>} Record or null, with extra IdNumberHex field computed by SQL
    */
   static async findByToken(token) {
     try {
       const pool = await connectDB();
       const cleanToken = (token || "").trim();
-      const { raw, hex } = this.normalizeRfidFormats(cleanToken);
+      const { raw, hex } = IdManagement.normalizeRfidFormats(cleanToken);
 
       const result = await pool
         .request()
@@ -532,7 +539,7 @@ class IdManagement {
         .query(`
           SELECT TOP 1 i.*
           FROM IdManagement i
-          WHERE (i.QrToken = @token OR i.RfidCode = @raw OR i.RfidCodeHex = @hex OR i.RfidCode = @hex OR i.RfidCodeHex = @raw) AND i.IsActive = 1
+          WHERE (i.QrToken = @token OR i.IdNumber = @token OR i.IdNumber = @raw OR i.RfidCode = @raw OR i.RfidCodeHex = @hex OR i.RfidCode = @hex OR i.RfidCodeHex = @raw) AND i.IsActive = 1
         `);
       return result.recordset[0] || null;
     } catch (err) {
@@ -615,9 +622,9 @@ class IdManagement {
   }
 
   /**
-   * Get visitor info + assigned RfidCode for a given IdManagement record ID
+   * Get visitor info + assigned IdNumber/RfidCode for a given IdManagement record ID
    * @param {number} idManagementId - Primary key
-   * @returns {Promise<Object|null>} Record with RfidCode or null
+   * @returns {Promise<Object|null>} Record with IdNumber/RfidCode or null
    */
   static async getVisitorWithRfid(idManagementId) {
     try {
@@ -627,7 +634,7 @@ class IdManagement {
         .input("id", sql.Int, idManagementId)
         .query(`
           SELECT i.IdManagementID, i.VisitorName, i.PhoneNumber, i.Company,
-                 i.Purpose, i.IdType, i.Status, i.RfidCode, i.RfidCodeHex, i.ValidFrom, i.ValidUntil
+                 i.Purpose, i.IdType, i.Status, i.IdNumber, i.RfidCode, i.RfidCodeHex, i.ValidFrom, i.ValidUntil
           FROM IdManagement i
           WHERE i.IdManagementID = @id AND i.IsActive = 1
         `);

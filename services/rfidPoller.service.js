@@ -5,21 +5,14 @@ const rfidConfig = require("../config/rfidConfig");
 const DATA_URL = rfidConfig.RFID_STREAM_URL;
 const POLL_INTERVAL_MS = rfidConfig.POLL_INTERVAL_MS;
 
-// The 8-char hex prefix of the tag we are tracking (e.g. "56303032" = V002)
-// Derived once from DEFAULT_TRACKING_TAG so we don't recompute every poll
-const TARGET_TAG_HEX = Buffer.from(
-  rfidConfig.DEFAULT_TRACKING_TAG.substring(0, 4),
-  "utf8"
-).toString("hex").toUpperCase();  // "V002" -> "56303032"
-
 let pollerTimer = null;
 
 /**
  * One fetch-and-process cycle:
  *  1. GET the live data from 16.170.141.146:5000/data
- *  2. Filter entries whose rfid_code starts with TARGET_TAG_HEX
- *  3. Sort filtered entries by received_at DESC → take the first (= most recent)
- *  4. Pass that single scan to rfidTrackerService.updateScan()
+ *  2. Group entries by rfid_code across ALL active tags in stream
+ *  3. Pick the latest scan (newest received_at) for each tag
+ *  4. Update in-memory live tracking state via rfidTrackerService.updateScan()
  */
 function fetchRfidStream() {
   const req = http.get(DATA_URL, (res) => {
@@ -37,22 +30,27 @@ function fetchRfidStream() {
         const parsed = JSON.parse(rawData);
         if (!parsed.success || !Array.isArray(parsed.data)) return;
 
-        // ── Find the LATEST scan for our target tag in the current buffer ──
-        const tagScans = parsed.data.filter(
-          (s) => s.rfid_code && s.rfid_code.toUpperCase().startsWith(TARGET_TAG_HEX)
-        );
+        // Group scans by rfid_code
+        const tagMap = new Map();
 
-        if (tagScans.length === 0) return; // tag not in current buffer — keep existing state
+        for (const scan of parsed.data) {
+          if (!scan || !scan.rfid_code || !scan.machine_number) continue;
+          const codeKey = scan.rfid_code.trim().toUpperCase();
 
-        // Sort newest-first and pick the top entry
-        tagScans.sort((a, b) => new Date(b.received_at) - new Date(a.received_at));
-        const latest = tagScans[0];
+          const existing = tagMap.get(codeKey);
+          if (!existing || new Date(scan.received_at) > new Date(existing.received_at)) {
+            tagMap.set(codeKey, scan);
+          }
+        }
 
-        await rfidTrackerService.updateScan({
-          tagId:          TARGET_TAG_HEX,          // 8-char hex key, e.g. "56303032"
-          machine_number: latest.machine_number,   // reader id from stream
-          received_at:    latest.received_at,       // timestamp of this scan
-        });
+        // Update state for all tags present in current live buffer
+        for (const [codeKey, latestScan] of tagMap.entries()) {
+          await rfidTrackerService.updateScan({
+            tagId:          codeKey,
+            machine_number: latestScan.machine_number,
+            received_at:    latestScan.received_at,
+          });
+        }
 
       } catch (err) {
         console.error("❌ [RFID POLLER] Stream parse error:", err.message);
@@ -71,10 +69,7 @@ function fetchRfidStream() {
 }
 
 function startPoller() {
-  console.log(
-    `🌐 [RFID POLLER] Tracking tag '${rfidConfig.DEFAULT_TRACKING_TAG}' ` +
-    `(hex prefix: ${TARGET_TAG_HEX}) → polling ${DATA_URL} every ${POLL_INTERVAL_MS}ms`
-  );
+  console.log(`🌐 [RFID POLLER] Live tracking poller active → polling ${DATA_URL} every ${POLL_INTERVAL_MS}ms`);
   fetchRfidStream();
   if (!pollerTimer) {
     pollerTimer = setInterval(fetchRfidStream, POLL_INTERVAL_MS);
@@ -90,3 +85,4 @@ function stopPoller() {
 }
 
 module.exports = { startPoller, stopPoller, fetchRfidStream };
+

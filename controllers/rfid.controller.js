@@ -193,6 +193,34 @@ exports.getLivePathByToken = async (req, res) => {
 };
 
 /**
+ * Debug: Return raw DB record for a token (for troubleshooting only)
+ * GET /api/rfid/debug-token/:token
+ */
+exports.debugToken = async (req, res) => {
+  try {
+    const { token } = req.params;
+    const IdManagement = require("../models/IDManagement.model");
+    const dbRecord = await IdManagement.findByToken(token);
+    return res.status(200).json({
+      success: true,
+      token,
+      dbRecord: dbRecord ? {
+        IdManagementID: dbRecord.IdManagementID,
+        VisitorName: dbRecord.VisitorName,
+        IdNumber: dbRecord.IdNumber,
+        IdNumberHexComputed: dbRecord.IdNumberHexComputed,
+        RfidCode: dbRecord.RfidCode,
+        QrToken: dbRecord.QrToken,
+        IdNumberHexJS: dbRecord.IdNumber ? Buffer.from(String(dbRecord.IdNumber), "latin1").toString("hex").toUpperCase() : null,
+      } : null,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
+/**
  * Get All 15 RFID Readers Configuration
  * GET /api/rfid/readers
  */

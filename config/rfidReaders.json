@@ -84,7 +84,7 @@
     "ser": "20.10",
     "location": "Loding Gate Door",
     "port": 9000,
-    "coords": { "x": 47.4, "y": 45.4 }
+    "coords": { "x": 47.6, "y": 45.4 }
   },
   {
     "sequence": 9,
@@ -94,7 +94,7 @@
     "ser": "20.10",
     "location": "Above Colo-2 Door",
     "port": 9000,
-    "coords": { "x": 46.5, "y": 39.8 }
+    "coords": { "x": 47.6, "y": 39.8 }
   },
   {
     "sequence": 10,
@@ -124,7 +124,7 @@
     "ser": "20.10",
     "location": "Colo-1 Entry",
     "port": 9000,
-    "coords": { "x": 61.8, "y": 40.3 }
+    "coords": { "x": 60.8, "y": 40.3 }
   },
   {
     "sequence": 13,
@@ -134,7 +134,7 @@
     "ser": "20.10",
     "location": "Facing Toward Row 5-6",
     "port": 9000,
-    "coords": { "x": 61.8, "y": 44.3 }
+    "coords": { "x": 60.8, "y": 44.3 }
   },
   {
     "sequence": 14,
