@@ -1,34 +1,38 @@
 const { connectDB, sql } = require("../config/db");
 
-let isTableVerified = false;
+let ensureTablePromise = null;
 
 class RfidLogModel {
   /**
    * Ensure RfidLogs table exists in SQL Server (Atomic check)
    */
   static async ensureTableExists() {
-    if (isTableVerified) return;
-    isTableVerified = true; // Set flag immediately to prevent concurrent duplicate checks
-    try {
-      const pool = await connectDB();
-      const checkQuery = `
-        IF OBJECT_ID('dbo.RfidLogs', 'U') IS NULL
-        BEGIN
-            CREATE TABLE dbo.RfidLogs (
-                LogID INT IDENTITY(1,1) PRIMARY KEY,
-                RfidCode VARCHAR(100) NOT NULL,
-                MachineNumber VARCHAR(50) NOT NULL,
-                Location VARCHAR(100) NULL,
-                ReceivedAt DATETIME DEFAULT GETDATE(),
-                RawHex VARCHAR(255) NULL
-            );
-        END
-      `;
-      await pool.request().query(checkQuery);
-      console.log("✅ [SQL MODEL] RfidLogs table verified/ready");
-    } catch (error) {
-      console.error("❌ [SQL MODEL] Error ensuring RfidLogs table exists:", error);
-    }
+    if (ensureTablePromise) return ensureTablePromise;
+    ensureTablePromise = (async () => {
+      try {
+        const pool = await connectDB();
+        const checkQuery = `
+          IF OBJECT_ID('dbo.RfidLogs', 'U') IS NULL
+          BEGIN
+              CREATE TABLE dbo.RfidLogs (
+                  LogID INT IDENTITY(1,1) PRIMARY KEY,
+                  RfidCode VARCHAR(100) NOT NULL,
+                  MachineNumber VARCHAR(50) NOT NULL,
+                  Location VARCHAR(100) NULL,
+                  ReceivedAt DATETIME DEFAULT GETDATE(),
+                  RawHex VARCHAR(255) NULL
+              );
+          END
+        `;
+        await pool.request().query(checkQuery);
+        console.log("✅ [SQL MODEL] RfidLogs table verified/ready");
+      } catch (error) {
+        ensureTablePromise = null; // Reset on failure to allow retry on next call
+        console.error("❌ [SQL MODEL] Error ensuring RfidLogs table exists:", error);
+        throw error;
+      }
+    })();
+    return ensureTablePromise;
   }
 
   /**
