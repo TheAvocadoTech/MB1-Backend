@@ -42,16 +42,48 @@ class IdManagement {
         throw new Error("Phone number is required");
       }
 
-      console.log("📝 Creating ID record:", {
+      // Calculate midnight expiry (11:59:59.999 PM of the same day)
+      const startDate = validFrom ? new Date(validFrom) : new Date();
+      const pad = (n) => String(n).padStart(2, "0");
+      const localMidnightStr = `${startDate.getFullYear()}-${pad(startDate.getMonth() + 1)}-${pad(startDate.getDate())} 23:59:59.999`;
+      
+      const finalValidUntil = validUntil ? new Date(validUntil) : localMidnightStr;
+
+      console.log("📝 Creating ID record with local midnight expiry:", {
         visitorName,
         phoneNumber,
         company,
+        idNumber,
+        validUntil: localMidnightStr,
       });
+
+      const pool = await connectDB();
+
+      // Check if this tag/idNumber is already assigned to an active visitor today
+      if (idNumber && String(idNumber).trim()) {
+        const checkTag = await pool
+          .request()
+          .input("idNumber", sql.NVarChar, String(idNumber).trim())
+          .query(`
+            SELECT TOP 1 IdManagementID, VisitorName, ValidUntil
+            FROM IdManagement
+            WHERE IdNumber = @idNumber 
+              AND IsActive = 1 
+              AND Status = 'Active'
+              AND (ValidUntil IS NULL OR ValidUntil > GETDATE())
+          `);
+
+        if (checkTag.recordset.length > 0) {
+          const activeVis = checkTag.recordset[0];
+          throw new Error(
+            `ID Tag '${idNumber}' is currently assigned to '${activeVis.VisitorName}' until midnight. Please choose an available ID Tag.`
+          );
+        }
+      }
 
       const crypto = require("crypto");
       const generatedToken = "VTK_" + crypto.randomBytes(8).toString("hex");
 
-      const pool = await connectDB();
       const result = await pool
         .request()
         .input("visitorName", sql.NVarChar, visitorName)
@@ -61,8 +93,8 @@ class IdManagement {
         .input("purpose", sql.NVarChar, purpose || null)
         .input("idType", sql.NVarChar, idType)
         .input("idNumber", sql.NVarChar, idNumber || null)
-        .input("validFrom", sql.DateTime, validFrom || new Date())
-        .input("validUntil", sql.DateTime, validUntil || null)
+        .input("validFrom", sql.DateTime, startDate)
+        .input("validUntil", sql.NVarChar, validUntil ? new Date(validUntil).toISOString() : localMidnightStr)
         .input("createdBy", sql.Int, createdBy || null)
         .input("status", sql.NVarChar, status)
         .input("qrToken", sql.VarChar(100), generatedToken)
@@ -189,7 +221,31 @@ class IdManagement {
 
       const pool = await connectDB();
       const result = await request.query(query);
-      return result.recordset;
+
+      const TEMP_BROWSER_BASE =
+        process.env.TEMP_BROWSER_BASE_URL || "http://localhost:3000/temp";
+      const now = new Date();
+
+      const records = result.recordset.map((r) => {
+        const isCurrentlyActive =
+          r.Status === "Active" &&
+          r.ValidUntil &&
+          new Date(r.ValidUntil) > now;
+
+        const token = r.QrToken || null;
+        const mapUrl = token ? `${TEMP_BROWSER_BASE}/?token=${token}` : null;
+
+        return {
+          ...r,
+          isOnVisit: isCurrentlyActive,
+          activeTagNumber: isCurrentlyActive ? r.IdNumber : null,
+          activeCompany: isCurrentlyActive ? r.Company : null,
+          token: token,
+          mapUrl: mapUrl,
+        };
+      });
+
+      return records;
     } catch (err) {
       console.error("Error finding ID records:", err);
       throw err;
@@ -352,9 +408,152 @@ class IdManagement {
                     WHERE Status = 'Active' AND IsActive = 1
                     ORDER BY CreatedAt DESC
                 `);
-      return result.recordset;
+
+      const TEMP_BROWSER_BASE =
+        process.env.TEMP_BROWSER_BASE_URL || "http://localhost:3000/temp";
+
+      const now = new Date();
+
+      const records = result.recordset.map((r) => {
+        const isCurrentlyActive =
+          r.Status === "Active" &&
+          r.ValidUntil &&
+          new Date(r.ValidUntil) > now;
+
+        const token = r.QrToken || null;
+        const mapUrl = token ? `${TEMP_BROWSER_BASE}/?token=${token}` : null;
+
+        return {
+          ...r,
+          isOnVisit: isCurrentlyActive,
+          activeTagNumber: isCurrentlyActive ? r.IdNumber : null,
+          activeCompany: isCurrentlyActive ? r.Company : null,
+          token: token,
+          mapUrl: mapUrl,
+        };
+      });
+
+      return records;
     } catch (err) {
-      console.error("Error finding active ID records:", err);
+      console.error("Error fetching ID records:", err);
+      throw err;
+    }
+  }
+
+  /**
+   * Assign an ID tag to a permanent visitor for today's visit (expires at 12 AM midnight IST)
+   * @param {number} idManagementId
+   * @param {Object} data
+   * @param {string} data.idNumber
+   * @returns {Promise<Object>}
+   */
+  static async assignTag(idManagementId, data) {
+    try {
+      const { idNumber, company } = data;
+      if (!idNumber || !String(idNumber).trim()) {
+        throw new Error("ID Tag / Number is required to check in visitor.");
+      }
+
+      const cleanId = String(idNumber).trim();
+      const cleanCompany = company ? String(company).trim() : null;
+      const pool = await connectDB();
+
+      // Check if tag is currently assigned to another active visitor today
+      const checkTag = await pool
+        .request()
+        .input("idNumber", sql.NVarChar, cleanId)
+        .input("currentId", sql.Int, idManagementId)
+        .query(`
+          SELECT TOP 1 IdManagementID, VisitorName
+          FROM IdManagement
+          WHERE IdNumber = @idNumber 
+            AND IdManagementID != @currentId
+            AND IsActive = 1 
+            AND Status = 'Active'
+            AND (ValidUntil IS NULL OR ValidUntil > GETDATE())
+        `);
+
+      if (checkTag.recordset.length > 0) {
+        const activeVis = checkTag.recordset[0];
+        throw new Error(
+          `ID Tag '${cleanId}' is currently assigned to '${activeVis.VisitorName}' until 12 AM midnight. Please choose an available ID Tag.`
+        );
+      }
+
+      // Calculate midnight expiry string (23:59:59.999 PM IST of today)
+      const startDate = new Date();
+      const pad = (n) => String(n).padStart(2, "0");
+      const localMidnightStr = `${startDate.getFullYear()}-${pad(startDate.getMonth() + 1)}-${pad(startDate.getDate())} 23:59:59.999`;
+
+      const crypto = require("crypto");
+      const generatedToken = "VTK_" + crypto.randomBytes(8).toString("hex");
+
+      const result = await pool
+        .request()
+        .input("id", sql.Int, idManagementId)
+        .input("idNumber", sql.NVarChar, cleanId)
+        .input("company", sql.NVarChar, cleanCompany)
+        .input("validFrom", sql.DateTime, startDate)
+        .input("validUntil", sql.NVarChar, localMidnightStr)
+        .input("qrToken", sql.VarChar(100), generatedToken)
+        .query(`
+          UPDATE IdManagement
+          SET IdNumber = @idNumber,
+              Company = @company,
+              ValidFrom = @validFrom,
+              ValidUntil = @validUntil,
+              Status = 'Active',
+              QrToken = @qrToken,
+              UpdatedAt = GETDATE()
+          OUTPUT INSERTED.*
+          WHERE IdManagementID = @id AND IsActive = 1
+        `);
+
+      if (result.recordset.length === 0) {
+        throw new Error("Visitor record not found.");
+      }
+
+      const record = result.recordset[0];
+      const TEMP_BROWSER_BASE =
+        process.env.TEMP_BROWSER_BASE_URL || "http://localhost:3000/temp";
+      const token = record.QrToken || generatedToken;
+
+      return {
+        ...record,
+        token: token,
+        mapUrl: `${TEMP_BROWSER_BASE}/?token=${token}`,
+      };
+    } catch (err) {
+      console.error("Error assigning tag to visitor:", err);
+      throw err;
+    }
+  }
+
+  /**
+   * End visit early (releases tag before midnight)
+   * @param {number} idManagementId
+   * @returns {Promise<Object>}
+   */
+  static async endVisit(idManagementId) {
+    try {
+      const pool = await connectDB();
+      const result = await pool
+        .request()
+        .input("id", sql.Int, idManagementId)
+        .query(`
+          UPDATE IdManagement
+          SET ValidUntil = GETDATE(),
+              Status = 'Completed',
+              IdNumber = NULL,
+              Company = NULL,
+              UpdatedAt = GETDATE()
+          OUTPUT INSERTED.*
+          WHERE IdManagementID = @id AND IsActive = 1
+        `);
+
+      return result.recordset[0] || null;
+    } catch (err) {
+      console.error("Error ending visit:", err);
       throw err;
     }
   }

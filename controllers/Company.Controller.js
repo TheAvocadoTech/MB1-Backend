@@ -27,22 +27,15 @@ const createCompany = async (req, res) => {
       });
     }
 
-    if (!contactPerson) {
-      return res.status(400).json({
-        success: false,
-        message: "Contact person is required.",
-      });
-    }
-
     // Create company
     const company = await Company.create({
       companyName,
-      contactPerson,
-      email,
-      phone,
-      address,
-      industry,
-      website,
+      contactPerson: contactPerson || null,
+      email: email || null,
+      phone: phone || null,
+      address: address || null,
+      industry: industry || null,
+      website: website || null,
       createdBy: req.user?.userId || null,
     });
 

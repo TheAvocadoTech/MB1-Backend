@@ -11,9 +11,45 @@ const {
   getActiveIdRecords,
   getExpiredIdRecords,
   getIdStats,
+  getAllTags,
+  getAvailableTags,
+  createTag,
+  updateTag,
+  deleteTag,
+  assignTagToVisitor,
+  endVisitorVisit,
 } = require("../controllers/IDManagment.Controller");
 
 const { protect, admin } = require("../middleware/auth.middleware");
+
+/* ===========================
+   TAG / BADGE ROUTES
+=========================== */
+
+// Get available tags for visitor dropdown (Public / Protected)
+router.get("/tags/available", getAvailableTags);
+
+// Get all tags
+router.get("/tags", getAllTags);
+
+// Create tag
+router.post("/tags", protect, createTag);
+
+// Update tag
+router.put("/tags/:id", protect, updateTag);
+
+// Delete tag
+router.delete("/tags/:id", protect, deleteTag);
+
+/* ===========================
+   VISITOR ON VISIT / TAG ASSIGNMENT ROUTES
+=========================== */
+
+// Assign tag to visitor for today's visit (On Visit button)
+router.put("/:id/assign-tag", protect, assignTagToVisitor);
+
+// End visit early for visitor (releases tag)
+router.put("/:id/end-visit", protect, endVisitorVisit);
 
 /* ===========================
    PUBLIC ROUTES (No authentication required)

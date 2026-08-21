@@ -32,17 +32,14 @@ class Company {
       if (!companyName) {
         throw new Error("Company name is required");
       }
-      if (!contactPerson) {
-        throw new Error("Contact person is required");
-      }
 
-      console.log("📝 Creating company:", { companyName, contactPerson });
+      console.log("📝 Creating company:", { companyName });
 
       const pool = await sql.connect();
       const result = await pool
         .request()
         .input("companyName", sql.NVarChar, companyName)
-        .input("contactPerson", sql.NVarChar, contactPerson)
+        .input("contactPerson", sql.NVarChar, contactPerson || null)
         .input("email", sql.NVarChar, email || null)
         .input("phone", sql.NVarChar, phone || null)
         .input("address", sql.NVarChar, address || null)
