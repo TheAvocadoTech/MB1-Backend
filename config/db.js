@@ -49,6 +49,10 @@ async function connectDB() {
     console.log(
       `📊 Connected to Database: ${result.recordset[0].databaseName}`,
     );
+
+    // Auto-create missing database tables
+    await initDBTables(pool);
+
     retryCount = 0; // Reset retry count on success
     return pool;
   } catch (err) {
@@ -88,6 +92,119 @@ async function connectDB() {
     console.error(`   Password: [your password]`);
 
     throw err;
+  }
+}
+
+/**
+ * Automatically check & create all missing database tables on startup
+ */
+async function initDBTables(pool) {
+  try {
+    const tableQueries = `
+      -- 1. Users Table
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[Users]') AND type in (N'U'))
+      BEGIN
+        CREATE TABLE Users (
+          UserID INT IDENTITY(1,1) PRIMARY KEY,
+          FullName NVARCHAR(255) NOT NULL,
+          Email NVARCHAR(255) NOT NULL UNIQUE,
+          Password NVARCHAR(255) NOT NULL,
+          Role NVARCHAR(50) DEFAULT 'Receptionist',
+          IsActive BIT DEFAULT 1,
+          CreatedBy INT NULL,
+          CreatedAt DATETIME DEFAULT GETDATE(),
+          UpdatedAt DATETIME NULL,
+          DeletedAt DATETIME NULL
+        );
+        PRINT 'Created Users table';
+      END
+
+      -- 2. Companies Table
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[Companies]') AND type in (N'U'))
+      BEGIN
+        CREATE TABLE Companies (
+          CompanyID INT IDENTITY(1,1) PRIMARY KEY,
+          CompanyName NVARCHAR(255) NOT NULL UNIQUE,
+          ContactPerson NVARCHAR(150) NULL,
+          Email NVARCHAR(255) NULL,
+          Phone NVARCHAR(50) NULL,
+          Address NVARCHAR(MAX) NULL,
+          Industry NVARCHAR(100) NULL,
+          Website NVARCHAR(255) NULL,
+          IsActive BIT DEFAULT 1,
+          CreatedBy INT NULL,
+          CreatedAt DATETIME DEFAULT GETDATE(),
+          UpdatedAt DATETIME NULL,
+          DeletedAt DATETIME NULL
+        );
+        PRINT 'Created Companies table';
+      END
+
+      -- 3. IdTags Table (Physical Hardware Inventory)
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[IdTags]') AND type in (N'U'))
+      BEGIN
+        CREATE TABLE IdTags (
+          TagID INT IDENTITY(1,1) PRIMARY KEY,
+          IdNumber NVARCHAR(100) NOT NULL UNIQUE,
+          Nickname NVARCHAR(150) NOT NULL,
+          RfidCodeHex VARCHAR(100) NULL,
+          IsActive BIT DEFAULT 1,
+          CreatedBy INT NULL,
+          CreatedAt DATETIME DEFAULT GETDATE(),
+          UpdatedAt DATETIME NULL,
+          DeletedAt DATETIME NULL
+        );
+        PRINT 'Created IdTags table';
+      END
+
+      -- 4. IdManagement Table (Permanent Directory & Visit Ledger)
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[IdManagement]') AND type in (N'U'))
+      BEGIN
+        CREATE TABLE IdManagement (
+          IdManagementID INT IDENTITY(1,1) PRIMARY KEY,
+          VisitorName NVARCHAR(255) NOT NULL,
+          PhoneNumber NVARCHAR(50) NOT NULL,
+          Email NVARCHAR(255) NULL,
+          Company NVARCHAR(255) NULL,
+          Purpose NVARCHAR(MAX) NULL,
+          IdType NVARCHAR(50) DEFAULT 'Visitor',
+          IdNumber NVARCHAR(100) NULL,
+          ValidFrom DATETIME DEFAULT GETDATE(),
+          ValidUntil DATETIME NULL,
+          Status NVARCHAR(50) DEFAULT 'Registered',
+          IsActive BIT DEFAULT 1,
+          CreatedBy INT NULL,
+          CreatedAt DATETIME DEFAULT GETDATE(),
+          UpdatedAt DATETIME NULL,
+          DeletedAt DATETIME NULL,
+          RfidCode VARCHAR(100) NULL,
+          QrToken VARCHAR(100) NULL,
+          RfidCodeHex VARCHAR(100) NULL
+        );
+        PRINT 'Created IdManagement table';
+      END
+
+      -- 5. RfidLogs Table (Hardware Scanner Logs)
+      IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[RfidLogs]') AND type in (N'U'))
+      BEGIN
+        CREATE TABLE RfidLogs (
+          LogID INT IDENTITY(1,1) PRIMARY KEY,
+          TagCode NVARCHAR(100) NULL,
+          RfidCodeHex VARCHAR(100) NULL,
+          ReaderID NVARCHAR(50) NULL,
+          RawHex NVARCHAR(MAX) NULL,
+          Rssi INT NULL,
+          ScannedAt DATETIME DEFAULT GETDATE(),
+          IdManagementID INT NULL
+        );
+        PRINT 'Created RfidLogs table';
+      END
+    `;
+
+    await pool.request().query(tableQueries);
+    console.log("⚡ Database tables auto-initialization check completed!");
+  } catch (tableErr) {
+    console.error("⚠️ Database auto-table creation notice:", tableErr.message);
   }
 }
 

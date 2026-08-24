@@ -269,6 +269,9 @@ async function getLivePathByToken(tokenInput) {
   let idManagementId = null;
   let tagCodeToUse = token; // fallback: use the token string itself
 
+  let isExpired = false;
+  let companyName = null;
+
   try {
     const IdManagement = require("../models/IDManagement.model");
     const dbRecord = await IdManagement.findByToken(token);
@@ -276,21 +279,22 @@ async function getLivePathByToken(tokenInput) {
     if (dbRecord) {
       visitorName = dbRecord.VisitorName || "Visitor";
       idManagementId = dbRecord.IdManagementID;
+      companyName = dbRecord.Company || dbRecord.CompanyName || null;
 
-      // The IdNumber column is nvarchar in SQL Server.
-      // idNumberToHex8() uses latin1 single-byte encoding which gives the correct
-      // 8-char hex prefix matching the hardware RFID reader format.
-      // e.g. IdNumber "09]ú" → latin1 bytes [0x30,0x39,0x5D,0xFA] → "30395DFA"
+      if (dbRecord.Status === "Completed" || (dbRecord.ValidUntil && new Date(dbRecord.ValidUntil) < new Date())) {
+        isExpired = true;
+      }
+
       if (dbRecord.IdNumber && dbRecord.IdNumber.trim() && dbRecord.IdNumber.trim() !== token) {
         tagCodeToUse = idNumberToHex8(dbRecord.IdNumber.trim()) || token;
       } else if (dbRecord.RfidCode && dbRecord.RfidCode.trim() && dbRecord.RfidCode.trim() !== token) {
         tagCodeToUse = dbRecord.RfidCode.trim();
       }
 
-      console.log(`✅ [TOKEN→TAG] Token: ${token} | Using: ${tagCodeToUse} | Visitor: ${visitorName}`);
+      console.log(`✅ [TOKEN→TAG] Token: ${token} | Using: ${tagCodeToUse} | Visitor: ${visitorName} | Expired: ${isExpired}`);
 
       // Update tokenMap for non-blocking use elsewhere
-      tokenMap.set(token, { token, idManagementId, tagCode: tagCodeToUse, visitorName });
+      tokenMap.set(token, { token, idManagementId, tagCode: tagCodeToUse, visitorName, isExpired });
     } else {
       console.log(`⚠️ [TOKEN→TAG] Token ${token} not found in DB — using token as tagCode`);
     }
@@ -300,14 +304,17 @@ async function getLivePathByToken(tokenInput) {
     const cached = tokenMap.get(token);
     if (cached?.hex8FromSQL) tagCodeToUse = cached.hex8FromSQL;
     else if (cached?.tagCode && cached.tagCode !== token) tagCodeToUse = cached.tagCode;
+    if (cached?.isExpired) isExpired = true;
   }
 
   const livePath = await getLivePathForTag(tagCodeToUse);
   return {
     ...livePath,
     visitorName:    visitorName || livePath.visitorName,
+    company:        companyName || livePath.company,
     token,
     idManagementId,
+    isExpired,
   };
 }
 
