@@ -30,23 +30,24 @@ function fetchRfidStream() {
         const parsed = JSON.parse(rawData);
         if (!parsed.success || !Array.isArray(parsed.data)) return;
 
-        // Group scans by rfid_code
+        // Group scans by 8-character hex prefix (physical tag identifier)
         const tagMap = new Map();
 
         for (const scan of parsed.data) {
           if (!scan || !scan.rfid_code || !scan.machine_number) continue;
-          const codeKey = scan.rfid_code.trim().toUpperCase();
+          const rawCode = scan.rfid_code.trim().toUpperCase();
+          const hex8Prefix = rawCode.length >= 8 ? rawCode.substring(0, 8) : rawCode;
 
-          const existing = tagMap.get(codeKey);
+          const existing = tagMap.get(hex8Prefix);
           if (!existing || new Date(scan.received_at) > new Date(existing.received_at)) {
-            tagMap.set(codeKey, scan);
+            tagMap.set(hex8Prefix, scan);
           }
         }
 
         // Update state for all tags present in current live buffer
-        for (const [codeKey, latestScan] of tagMap.entries()) {
+        for (const [hex8Prefix, latestScan] of tagMap.entries()) {
           await rfidTrackerService.updateScan({
-            tagId:          codeKey,
+            tagId:          latestScan.rfid_code,
             machine_number: latestScan.machine_number,
             received_at:    latestScan.received_at,
           });

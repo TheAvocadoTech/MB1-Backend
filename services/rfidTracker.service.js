@@ -108,6 +108,12 @@ async function updateScan({ tagId, machine_number, received_at }) {
     received_at:   scanTime.toISOString(),
   };
 
+  // Do not overwrite state if we already have a newer scan for this tag
+  const existing = latestTagState.get(hex8Prefix);
+  if (existing && existing.received_at && new Date(scanTime) < new Date(existing.received_at)) {
+    return existing;
+  }
+
   // Store under 8 hex digits key as well as full rawCode key
   latestTagState.set(hex8Prefix, state);
   latestTagState.set(rawCode, state);
