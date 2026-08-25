@@ -227,10 +227,18 @@ class IdManagement {
       const now = new Date();
 
       const records = result.recordset.map((r) => {
+        let validUntilDate = null;
+        if (r.ValidUntil) {
+          validUntilDate = r.ValidUntil instanceof Date
+            ? r.ValidUntil
+            : new Date(String(r.ValidUntil).replace(" ", "T"));
+        }
+
         const isCurrentlyActive =
           r.Status === "Active" &&
-          r.ValidUntil &&
-          new Date(r.ValidUntil) > now;
+          validUntilDate &&
+          !isNaN(validUntilDate.getTime()) &&
+          validUntilDate.getTime() > now.getTime();
 
         const token = r.QrToken || null;
         const mapUrl = token ? `${TEMP_BROWSER_BASE}/?token=${token}` : null;
@@ -415,10 +423,18 @@ class IdManagement {
       const now = new Date();
 
       const records = result.recordset.map((r) => {
+        let validUntilDate = null;
+        if (r.ValidUntil) {
+          validUntilDate = r.ValidUntil instanceof Date
+            ? r.ValidUntil
+            : new Date(String(r.ValidUntil).replace(" ", "T"));
+        }
+
         const isCurrentlyActive =
           r.Status === "Active" &&
-          r.ValidUntil &&
-          new Date(r.ValidUntil) > now;
+          validUntilDate &&
+          !isNaN(validUntilDate.getTime()) &&
+          validUntilDate.getTime() > now.getTime();
 
         const token = r.QrToken || null;
         const mapUrl = token ? `${TEMP_BROWSER_BASE}/?token=${token}` : null;
@@ -520,6 +536,9 @@ class IdManagement {
 
       return {
         ...record,
+        isOnVisit: true,
+        activeTagNumber: record.IdNumber,
+        activeCompany: record.Company,
         token: token,
         mapUrl: `${TEMP_BROWSER_BASE}/?token=${token}`,
       };
