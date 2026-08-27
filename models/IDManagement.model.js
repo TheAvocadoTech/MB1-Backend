@@ -236,9 +236,12 @@ class IdManagement {
 
         const isCurrentlyActive =
           r.Status === "Active" &&
-          validUntilDate &&
-          !isNaN(validUntilDate.getTime()) &&
-          validUntilDate.getTime() > now.getTime();
+          Boolean(r.IdNumber) &&
+          (!validUntilDate ||
+            isNaN(validUntilDate.getTime()) ||
+            validUntilDate.getTime() >= now.getTime() ||
+            new Date(r.ValidFrom || r.CreatedAt).toDateString() === now.toDateString() ||
+            (validUntilDate instanceof Date && validUntilDate.toDateString() === now.toDateString()));
 
         const token = r.QrToken || null;
         const mapUrl = token ? `${TEMP_BROWSER_BASE}/?token=${token}` : null;
@@ -499,7 +502,7 @@ class IdManagement {
       // Calculate midnight expiry string (23:59:59.999 PM IST of today)
       const startDate = new Date();
       const pad = (n) => String(n).padStart(2, "0");
-      const localMidnightStr = `${startDate.getFullYear()}-${pad(startDate.getMonth() + 1)}-${pad(startDate.getDate())} 23:59:59.999`;
+      const localMidnightStr = `${startDate.getFullYear()}-${pad(startDate.getMonth() + 1)}-${pad(startDate.getDate())} 23:59:59.997`;
 
       const crypto = require("crypto");
       const generatedToken = "VTK_" + crypto.randomBytes(8).toString("hex");
