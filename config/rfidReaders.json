@@ -124,7 +124,7 @@
     "ser": "20.10",
     "location": "Colo-1 Entry",
     "port": 9000,
-    "coords": { "x": 60.8, "y": 40.3 }
+    "coords": { "x": 61.3, "y": 40.3 }
   },
   {
     "sequence": 13,
@@ -134,7 +134,7 @@
     "ser": "20.10",
     "location": "Facing Toward Row 5-6",
     "port": 9000,
-    "coords": { "x": 60.8, "y": 44.3 }
+    "coords": { "x": 61.3, "y": 44.3 }
   },
   {
     "sequence": 14,

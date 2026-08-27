@@ -127,6 +127,12 @@ async function startServer() {
       rfidPoller.startPoller();
 
       /* =======================
+         Midnight Tag & Company Auto-Release Background Job
+      ======================= */
+      const midnightReleaseJob = require("./jobs/midnightRelease.job");
+      midnightReleaseJob.startMidnightReleaseJob();
+
+      /* =======================
          List All Routes (Console)
       ======================= */
       if (process.env.NODE_ENV !== "production") {

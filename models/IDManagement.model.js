@@ -743,8 +743,9 @@ class IdManagement {
 
   /**
    * Find IdManagement record by QrToken string
-   * @param {string} token - QrToken
-   * @returns {Promise<Object|null>} Record or null, with extra IdNumberHex field computed by SQL
+   * Prioritizes currently active assigned visit records over completed/old records
+   * @param {string} token - QrToken or tag code
+   * @returns {Promise<Object|null>} Record or null
    */
   static async findByToken(token) {
     try {
@@ -760,11 +761,56 @@ class IdManagement {
         .query(`
           SELECT TOP 1 i.*
           FROM IdManagement i
-          WHERE (i.QrToken = @token OR i.IdNumber = @token OR i.IdNumber = @raw OR i.RfidCode = @raw OR i.RfidCodeHex = @hex OR i.RfidCode = @hex OR i.RfidCodeHex = @raw) AND i.IsActive = 1
+          WHERE (
+            i.QrToken = @token 
+            OR i.IdNumber = @token 
+            OR i.IdNumber = @raw 
+            OR i.RfidCode = @raw 
+            OR i.RfidCodeHex = @hex 
+            OR i.RfidCode = @hex 
+            OR i.RfidCodeHex = @raw
+          ) AND i.IsActive = 1
+          ORDER BY 
+            CASE 
+              WHEN (i.Status = 'Active' OR i.Status IS NULL) AND i.IdNumber IS NOT NULL AND i.IdNumber != '' THEN 0 
+              ELSE 1 
+            END,
+            i.UpdatedAt DESC,
+            i.CreatedAt DESC
         `);
       return result.recordset[0] || null;
     } catch (err) {
       console.error("❌ [SQL MODEL] Error finding record by token:", err);
+      throw err;
+    }
+  }
+
+  /**
+   * Auto-release expired visits past 12 AM midnight
+   * Marks status as Completed and clears active IdNumber/Company so tag returns to available pool
+   * @returns {Promise<number>} Number of visits released
+   */
+  static async autoReleaseExpiredVisits() {
+    try {
+      const pool = await connectDB();
+      const result = await pool.request().query(`
+        UPDATE IdManagement
+        SET Status = 'Completed',
+            IdNumber = NULL,
+            Company = NULL,
+            UpdatedAt = GETDATE()
+        WHERE IsActive = 1 
+          AND Status = 'Active' 
+          AND ValidUntil IS NOT NULL 
+          AND ValidUntil < GETDATE();
+      `);
+      const count = result.rowsAffected[0] || 0;
+      if (count > 0) {
+        console.log(`🌙 [MIDNIGHT AUTO-RELEASE] Released ${count} visitor visit(s) past midnight.`);
+      }
+      return count;
+    } catch (err) {
+      console.error("❌ [SQL MODEL] Error in autoReleaseExpiredVisits:", err);
       throw err;
     }
   }

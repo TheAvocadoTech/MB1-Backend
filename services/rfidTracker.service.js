@@ -287,12 +287,39 @@ async function getLivePathByToken(tokenInput) {
       idManagementId = dbRecord.IdManagementID;
       companyName = dbRecord.Company || dbRecord.CompanyName || null;
 
-      if (dbRecord.Status === "Completed" || (dbRecord.ValidUntil && new Date(dbRecord.ValidUntil) < new Date())) {
+      const now = new Date();
+      let validUntilDate = null;
+      if (dbRecord.ValidUntil) {
+        validUntilDate = dbRecord.ValidUntil instanceof Date
+          ? dbRecord.ValidUntil
+          : new Date(String(dbRecord.ValidUntil).replace(" ", "T"));
+      }
+
+      const isSameDayVisit =
+        new Date(dbRecord.ValidFrom || dbRecord.CreatedAt).toDateString() === now.toDateString() ||
+        (validUntilDate && validUntilDate.toDateString() === now.toDateString());
+
+      // Determine session validity:
+      // Active if Status is Active (or null), tag is assigned, and has not passed midnight
+      const hasAssignedTag = Boolean(dbRecord.IdNumber && String(dbRecord.IdNumber).trim() !== "");
+      const isPastMidnight =
+        validUntilDate &&
+        !isNaN(validUntilDate.getTime()) &&
+        validUntilDate.getTime() < now.getTime() &&
+        !isSameDayVisit;
+      const isExplicitlyEnded =
+        dbRecord.Status === "Completed" ||
+        dbRecord.Status === "Revoked" ||
+        dbRecord.Status === "Expired";
+
+      if (isExplicitlyEnded || !hasAssignedTag || isPastMidnight) {
         isExpired = true;
+      } else {
+        isExpired = false;
       }
 
       if (dbRecord.IdNumber && dbRecord.IdNumber.trim() && dbRecord.IdNumber.trim() !== token) {
-        tagCodeToUse = idNumberToHex8(dbRecord.IdNumber.trim()) || token;
+        tagCodeToUse = idNumberToHex8(dbRecord.IdNumber.trim()) || dbRecord.IdNumber.trim();
       } else if (dbRecord.RfidCode && dbRecord.RfidCode.trim() && dbRecord.RfidCode.trim() !== token) {
         tagCodeToUse = dbRecord.RfidCode.trim();
       }
