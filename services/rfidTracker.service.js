@@ -20,14 +20,43 @@ function getReadersList() {
   }
 }
 
-/**
- * Find reader by numeric id field.
- * @param {string|number} readerId
- */
 function findReaderById(readerId) {
+  if (readerId === undefined || readerId === null || readerId === "") return null;
   const list = getReadersList();
-  const num = Number(readerId);
-  return list.find((r) => r.id === num) || null;
+  const rawStr = String(readerId).trim();
+  const num = Number(rawStr);
+
+  // 1. Try matching numeric id
+  if (!isNaN(num)) {
+    const byId = list.find((r) => r.id === num);
+    if (byId) return byId;
+
+    // 2. Try matching sequence (1..15)
+    const bySeq = list.find((r) => r.sequence === num);
+    if (bySeq) return bySeq;
+
+    // 3. Try matching numeric sr ("001" -> 1)
+    const bySrNum = list.find((r) => Number(r.sr) === num);
+    if (bySrNum) return bySrNum;
+  }
+
+  // 4. Try matching exact sr string (e.g. "001", "002") or trimmed leading zeros
+  const bySrStr = list.find(
+    (r) => r.sr && (r.sr === rawStr || r.sr.replace(/^0+/, "") === rawStr.replace(/^0+/, ""))
+  );
+  if (bySrStr) return bySrStr;
+
+  // 5. Try matching IP address
+  const byIp = list.find((r) => r.ip && r.ip === rawStr);
+  if (byIp) return byIp;
+
+  // 6. Try matching location name (case-insensitive)
+  const byLoc = list.find(
+    (r) => r.location && r.location.toLowerCase() === rawStr.toLowerCase()
+  );
+  if (byLoc) return byLoc;
+
+  return null;
 }
 
 /**
@@ -63,6 +92,45 @@ function asciiToHexPrefix(label) {
   return idNumberToHex8(label);
 }
 
+async function isTagTracked(rawCode, hex8Prefix) {
+  if (!rawCode) return false;
+  const cleanRaw = String(rawCode).trim().toUpperCase();
+  const cleanHex8 = (hex8Prefix || idNumberToHex8(cleanRaw) || "").toUpperCase();
+
+  // 1. Check default centralized tracking tag (e.g. "V002" / "56303032")
+  const defaultTag = (rfidConfig.DEFAULT_TRACKING_TAG || "V002").trim().toUpperCase();
+  const defaultHex8 = (idNumberToHex8(defaultTag) || "").toUpperCase();
+  if (
+    cleanRaw === defaultTag ||
+    cleanHex8 === defaultHex8 ||
+    cleanRaw.startsWith(defaultHex8)
+  ) {
+    return true;
+  }
+
+  // 2. Check active tokens in tokenMap
+  for (const item of tokenMap.values()) {
+    if (item && item.tagCode) {
+      const tc = String(item.tagCode).trim().toUpperCase();
+      const tcHex8 = (idNumberToHex8(tc) || "").toUpperCase();
+      if (cleanRaw === tc || cleanHex8 === tcHex8 || cleanRaw.startsWith(tcHex8)) {
+        return true;
+      }
+    }
+  }
+
+  // 3. Best-effort DB check for active visitor badges
+  try {
+    const IdManagement = require("../models/IDManagement.model");
+    const activeVisitor = (await IdManagement.findByRfidCode(cleanRaw)) || (await IdManagement.findByToken(cleanRaw));
+    if (activeVisitor && activeVisitor.Status !== "Completed" && activeVisitor.Status !== "Revoked") {
+      return true;
+    }
+  } catch (_) { /* non-blocking */ }
+
+  return false;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // IN-MEMORY STATE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -91,16 +159,26 @@ const tokenMap = new Map();
 async function updateScan({ tagId, machine_number, received_at }) {
   if (!tagId || !machine_number) return null;
 
-  const rawCode = tagId.trim().toUpperCase();
+  const rawCode = String(tagId).trim().toUpperCase();
   // Extract first 8 hex digits of rfid_code from live stream (e.g. "30395DFA82BF..." -> "30395DFA")
-  const hex8Prefix = rawCode.length >= 8 ? rawCode.substring(0, 8) : idNumberToHex8(rawCode);
-  const scanTime = received_at ? new Date(received_at) : new Date();
+  const hex8Prefix = rawCode.length >= 8 && /^[0-9A-F]+$/i.test(rawCode)
+    ? rawCode.substring(0, 8).toUpperCase()
+    : idNumberToHex8(rawCode);
+
+  let scanTime = new Date();
+  if (received_at) {
+    const parsed = new Date(received_at);
+    if (!isNaN(parsed.getTime())) {
+      scanTime = parsed;
+    }
+  }
+
   const reader = findReaderById(machine_number);
 
   const state = {
     tagId:         rawCode,
     hex8Prefix:    hex8Prefix,
-    machineNumber: Number(machine_number),
+    machineNumber: Number(machine_number) || machine_number,
     readerId:      reader ? reader.id      : Number(machine_number),
     sequence:      reader ? reader.sequence : 1,
     location:      reader ? reader.location : "Unknown Location",
@@ -109,43 +187,60 @@ async function updateScan({ tagId, machine_number, received_at }) {
   };
 
   // Do not overwrite state if we already have a newer scan for this tag
-  const existing = latestTagState.get(hex8Prefix);
-  if (existing && existing.received_at && new Date(scanTime) < new Date(existing.received_at)) {
-    return existing;
+  const existing = (hex8Prefix ? latestTagState.get(hex8Prefix) : null) || latestTagState.get(rawCode);
+  if (existing && existing.received_at) {
+    const existingTime = new Date(existing.received_at);
+    if (!isNaN(existingTime.getTime()) && scanTime.getTime() < existingTime.getTime()) {
+      return existing;
+    }
   }
 
   // Store under 8 hex digits key as well as full rawCode key
-  latestTagState.set(hex8Prefix, state);
+  if (hex8Prefix) {
+    latestTagState.set(hex8Prefix, state);
+  }
   latestTagState.set(rawCode, state);
 
   // Decode 8 hex digits using latin1 (e.g. "30395DFA" -> "09]ú") and map state to decoded tag string
-  try {
-    const latin1Tag = Buffer.from(hex8Prefix, "hex").toString("latin1").trim();
-    if (latin1Tag) {
-      latestTagState.set(latin1Tag, state);
-      latestTagState.set(latin1Tag.toUpperCase(), state);
-    }
-  } catch (_) {}
+  if (hex8Prefix) {
+    try {
+      const latin1Tag = Buffer.from(hex8Prefix, "hex").toString("latin1").trim();
+      if (latin1Tag) {
+        latestTagState.set(latin1Tag, state);
+        latestTagState.set(latin1Tag.toUpperCase(), state);
+      }
+    } catch (_) {}
 
-  // Decode using utf8 as fallback
-  try {
-    const utf8Tag = Buffer.from(hex8Prefix, "hex").toString("utf8").trim();
-    if (utf8Tag) {
-      latestTagState.set(utf8Tag, state);
-      latestTagState.set(utf8Tag.toUpperCase(), state);
-    }
-  } catch (_) {}
+    // Decode using utf8 as fallback
+    try {
+      const utf8Tag = Buffer.from(hex8Prefix, "hex").toString("utf8").trim();
+      if (utf8Tag) {
+        latestTagState.set(utf8Tag, state);
+        latestTagState.set(utf8Tag.toUpperCase(), state);
+      }
+    } catch (_) {}
+  }
 
-  // Persist to SQL (non-blocking)
-  try {
-    const RfidLogModel = require("../models/RfidLog.model");
-    await RfidLogModel.createLog({
-      rfid_code:      rawCode,
-      machine_number: machine_number,
-      location:       state.location,
-      received_at:    state.received_at,
-    });
-  } catch (_) { /* non-blocking */ }
+  // Persist to SQL (non-blocking, only for tracked tags and when location changes)
+  const isLocationChanged =
+    !existing ||
+    existing.location !== state.location ||
+    existing.machineNumber !== state.machineNumber;
+
+  if (isLocationChanged) {
+    const tracked = await isTagTracked(rawCode, hex8Prefix);
+    if (tracked) {
+      try {
+        const RfidLogModel = require("../models/RfidLog.model");
+        await RfidLogModel.createLog({
+          rfid_code:      rawCode,
+          machine_number: state.machineNumber,
+          location:       state.location,
+          received_at:    state.received_at,
+        });
+      } catch (_) { /* non-blocking */ }
+    }
+  }
 
   return state;
 }
@@ -162,25 +257,56 @@ async function getLivePathForTag(idNumberInput) {
   const readersList = getReadersList();
   const rawInput = (idNumberInput || rfidConfig.DEFAULT_TRACKING_TAG).trim();
 
-  // Convert idNumber to 8-character hex value (e.g. "09]ú" -> "30395DFA", "V002" -> "56303032")
+  // 1. Gather all direct candidate keys from rawInput
+  const candidateKeys = new Set();
+  candidateKeys.add(rawInput);
+  candidateKeys.add(rawInput.toUpperCase());
+  candidateKeys.add(rawInput.toLowerCase());
+
   const targetHex8 = idNumberToHex8(rawInput);
+  if (targetHex8) {
+    candidateKeys.add(targetHex8);
+    candidateKeys.add(targetHex8.toUpperCase());
+  }
+  if (rawInput.length >= 8 && /^[0-9A-F]+$/i.test(rawInput)) {
+    candidateKeys.add(rawInput.substring(0, 8).toUpperCase());
+  }
 
-  // ── State lookup: compare targetHex8 against the first 8 digits of live API rfid_code ──────
-  const currentState =
-    (targetHex8 ? latestTagState.get(targetHex8) : null) ||
-    latestTagState.get(rawInput) ||
-    latestTagState.get(rawInput.toUpperCase()) ||
-    null;
-
-  // ── DB visitor lookup (non-blocking, best-effort) ────────────────────────
+  // 2. DB visitor lookup (non-blocking, best-effort)
   let dbVisitor = null;
   try {
     const IdManagement = require("../models/IDManagement.model");
-    dbVisitor = await IdManagement.findByRfidCode(rawInput);
+    dbVisitor = (await IdManagement.findByRfidCode(rawInput)) || (await IdManagement.findByToken(rawInput));
   } catch (_) { /* non-blocking */ }
 
   if (!dbVisitor) {
     dbVisitor = rfidConfig.getDefaultVisitorFallback(rawInput);
+  }
+
+  // If a DB visitor record was resolved, add candidate keys from its assigned badge codes
+  if (dbVisitor) {
+    const badgeFields = [dbVisitor.IdNumber, dbVisitor.RfidCode, dbVisitor.RfidCodeHex];
+    for (const f of badgeFields) {
+      if (f && String(f).trim()) {
+        const val = String(f).trim();
+        candidateKeys.add(val);
+        candidateKeys.add(val.toUpperCase());
+        const h8 = idNumberToHex8(val);
+        if (h8) candidateKeys.add(h8.toUpperCase());
+        if (val.length >= 8 && /^[0-9A-F]+$/i.test(val)) {
+          candidateKeys.add(val.substring(0, 8).toUpperCase());
+        }
+      }
+    }
+  }
+
+  // 3. State lookup across ALL candidate keys
+  let currentState = null;
+  for (const key of candidateKeys) {
+    if (latestTagState.has(key)) {
+      currentState = latestTagState.get(key);
+      break;
+    }
   }
 
   // ── Build response ────────────────────────────────────────────────────────
@@ -318,18 +444,44 @@ async function getLivePathByToken(tokenInput) {
         isExpired = false;
       }
 
-      if (dbRecord.IdNumber && dbRecord.IdNumber.trim() && dbRecord.IdNumber.trim() !== token) {
-        tagCodeToUse = idNumberToHex8(dbRecord.IdNumber.trim()) || dbRecord.IdNumber.trim();
-      } else if (dbRecord.RfidCode && dbRecord.RfidCode.trim() && dbRecord.RfidCode.trim() !== token) {
-        tagCodeToUse = dbRecord.RfidCode.trim();
+      // Check all available badge candidates from DB
+      const candidateTagCodes = [
+        dbRecord.RfidCode,
+        dbRecord.RfidCodeHex,
+        dbRecord.IdNumber,
+      ].filter((code) => code && String(code).trim() && String(code).trim() !== token);
+
+      // Check if any candidate has an active scan in latestTagState right now
+      let matchedActiveCode = null;
+      for (const cand of candidateTagCodes) {
+        const cleanCand = String(cand).trim();
+        const candHex8 = idNumberToHex8(cleanCand);
+        if (
+          latestTagState.has(cleanCand) ||
+          latestTagState.has(cleanCand.toUpperCase()) ||
+          (candHex8 && latestTagState.has(candHex8.toUpperCase()))
+        ) {
+          matchedActiveCode = cleanCand;
+          break;
+        }
       }
+
+      // Use the matched active code if found, otherwise the primary assigned tag
+      tagCodeToUse = matchedActiveCode || candidateTagCodes[0] || token;
 
       console.log(`✅ [TOKEN→TAG] Token: ${token} | Using: ${tagCodeToUse} | Visitor: ${visitorName} | Expired: ${isExpired}`);
 
       // Update tokenMap for non-blocking use elsewhere
       tokenMap.set(token, { token, idManagementId, tagCode: tagCodeToUse, visitorName, isExpired });
     } else {
-      console.log(`⚠️ [TOKEN→TAG] Token ${token} not found in DB — using token as tagCode`);
+      const cached = tokenMap.get(token);
+      if (cached?.tagCode && cached.tagCode !== token) {
+        tagCodeToUse = cached.tagCode;
+        if (cached.visitorName) visitorName = cached.visitorName;
+        console.log(`✅ [TOKEN→TAG] Token ${token} resolved from tokenMap cache → Tag: ${tagCodeToUse}`);
+      } else {
+        console.log(`⚠️ [TOKEN→TAG] Token ${token} not found in DB or tokenMap — using token as tagCode`);
+      }
     }
   } catch (dbErr) {
     console.error("⚠️ [TOKEN RESOLUTION] DB lookup error:", dbErr.message);

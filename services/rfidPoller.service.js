@@ -35,12 +35,24 @@ function fetchRfidStream() {
 
         for (const scan of parsed.data) {
           if (!scan || !scan.rfid_code || !scan.machine_number) continue;
-          const rawCode = scan.rfid_code.trim().toUpperCase();
+          const rawCode = String(scan.rfid_code).trim().toUpperCase();
           const hex8Prefix = rawCode.length >= 8 ? rawCode.substring(0, 8) : rawCode;
 
           const existing = tagMap.get(hex8Prefix);
-          if (!existing || new Date(scan.received_at) > new Date(existing.received_at)) {
+          let isNewer = true;
+          if (existing && existing.received_at && scan.received_at) {
+            const newTime = new Date(scan.received_at).getTime();
+            const existingTime = new Date(existing.received_at).getTime();
+            if (!isNaN(newTime) && !isNaN(existingTime)) {
+              isNewer = newTime >= existingTime;
+            }
+          }
+
+          if (!existing || isNewer) {
             tagMap.set(hex8Prefix, scan);
+            if (hex8Prefix !== rawCode) {
+              tagMap.set(rawCode, scan);
+            }
           }
         }
 
